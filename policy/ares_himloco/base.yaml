@@ -26,3 +26,8 @@ ares_himloco:
                 "rl_hipa", "rl_hipf", "rl_knee",
                 "fr_hipa", "fr_hipf", "fr_knee",
                 "rr_hipa", "rr_hipf", "rr_knee"]
+  # Gamepad velocity command scales (driver node reads these)
+  gamepad:
+    linear_x_scale: 0.5    # axis 1: forward/backward
+    linear_y_scale: 0.0    # axis 0: lateral (disabled)
+    angular_z_scale: 0.5   # axis 3: rotation
