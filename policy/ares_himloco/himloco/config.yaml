@@ -48,8 +48,8 @@ ares_himloco/himloco:
                   17.0, 17.0, 17.0,
                   17.0, 17.0, 17.0]
   # Default standing pose in URDF/policy order (FL, RL, FR, RR)
-  default_dof_pos: [0, 0.55, -0.95,
-                    0, 0.55, -0.95,
-                    0, -0.55, 0.95,
-                    0, -0.55, 0.95]
+  default_dof_pos: [0, 0, 0,
+                    0, 0, 0,
+                    0, 0, 0,
+                    0, 0, 0]
   joint_mapping: [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]

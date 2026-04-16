@@ -18,10 +18,10 @@ ares_himloco:
                   17.0, 17.0, 17.0,
                   17.0, 17.0, 17.0]
   # Default standing pose in URDF/policy order (FL, RL, FR, RR)
-  default_dof_pos: [0, 0.55, -0.95,
-                    0, 0.55, -0.95,
-                    0, -0.55, 0.95,
-                    0, -0.55, 0.95]
+  default_dof_pos: [0, 0, 0,
+                    0, 0, 0,
+                    0, 0, 0,
+                    0, 0, 0]
   joint_names: ["fl_hipa", "fl_hipf", "fl_knee",
                 "rl_hipa", "rl_hipf", "rl_knee",
                 "fr_hipa", "fr_hipf", "fr_knee",
