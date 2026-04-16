@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source *)",
+      "Bash(colcon *)",
+      "Bash(git checkout *)"
+    ]
+  },
+  "$version": 3
+}

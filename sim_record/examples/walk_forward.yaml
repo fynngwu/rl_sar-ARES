@@ -1,0 +1,10 @@
+schedule:
+  - name: Stand
+    cmd: [0.0, 0.0, 0.0]
+    duration: 0.1
+  - name: Forward
+    cmd: [1.0, 0.0, 0.0]
+    duration: 4.0
+  - name: Stand
+    cmd: [0.0, 0.0, 0.0]
+    duration: 2.0

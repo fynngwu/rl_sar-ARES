@@ -1,0 +1,31 @@
+# ARES quadruped robot parameters — HIMloco variant (dog_v2_2_4)
+# Uses URDF joint ordering: FL, RL, FR, RR
+ares_himloco:
+  dt: 0.005
+  decimation: 4
+  fixed_kp: [30, 30, 30,
+             30, 30, 30,
+             30, 30, 30,
+             30, 30, 30]
+  fixed_kd: [1.0, 1.0, 1.0,
+             1.0, 1.0, 1.0,
+             1.0, 1.0, 1.0,
+             1.0, 1.0, 1.0]
+  num_of_dofs: 12
+  wheel_indices: []
+  torque_limits: [17.0, 17.0, 17.0,
+                  17.0, 17.0, 17.0,
+                  17.0, 17.0, 17.0,
+                  17.0, 17.0, 17.0]
+  # Default standing pose in URDF/policy order (FL, RL, FR, RR)
+  default_dof_pos: [0, 0.55, -0.95,
+                    0, 0.55, -0.95,
+                    0, -0.55, 0.95,
+                    0, -0.55, 0.95]
+  joint_names: ["lf_hipa", "lr_hipa", "rf_hipa", "rr_hipa",
+                "lf_hipf", "lr_hipf", "rf_hipf", "rr_hipf",
+                "lf_knee", "lr_knee", "rf_knee", "rr_knee"]
+  # Policy index (URDF order) -> driver index mapping
+  # URDF order: FL(0-2), RL(3-5), FR(6-8), RR(9-11)
+  # Driver order: lf_hipa(0), lr_hipa(1), rf_hipa(2), rr_hipa(3), lf_hipf(4), ...
+  joint_mapping: [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]
