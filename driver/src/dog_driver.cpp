@@ -20,6 +20,8 @@ DogDriver::DogDriver() {
         motor_controller_->BindCAN(can_interfaces_[leg]);
     }
 
+    motor_initialized_.fill(false);
+
     std::cout << "[DogDriver] Binding motors..." << std::endl;
     for (int leg = 0; leg < NUM_LEGS; ++leg) {
         for (int j = 0; j < JOINTS_PER_LEG; ++j) {
@@ -34,20 +36,30 @@ DogDriver::DogDriver() {
             int idx = motor_controller_->BindMotor(kCanNames[leg], std::move(motor_info));
             motor_indices_[global_idx] = idx;
 
-            motor_controller_->EnableMotor(idx);
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            motor_controller_->EnableAutoReport(idx);
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            motor_controller_->EnableAutoReport(idx);
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            try {
+                motor_controller_->EnableMotor(idx);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                motor_controller_->EnableAutoReport(idx);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                motor_controller_->EnableAutoReport(idx);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-            MIT_params params;
-            params.kp = DEFAULT_KP;
-            params.kd = DEFAULT_KD;
-            params.vel_limit = MAX_SPEED;
-            params.torque_limit = MAX_TORQUE;
-            motor_controller_->SetMITParams(idx, params);
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                MIT_params params;
+                params.kp = DEFAULT_KP;
+                params.kd = DEFAULT_KD;
+                params.vel_limit = MAX_SPEED;
+                params.torque_limit = MAX_TORQUE;
+                motor_controller_->SetMITParams(idx, params);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+                motor_initialized_[global_idx] = true;
+                std::cout << "[DogDriver] Motor " << global_idx
+                          << " initialized on " << kCanNames[leg] << std::endl;
+            } catch (const std::exception& e) {
+                std::cout << "[DogDriver] Motor " << global_idx
+                          << " init failed on " << kCanNames[leg]
+                          << ": " << e.what() << std::endl;
+            }
         }
     }
 
@@ -59,7 +71,8 @@ DogDriver::DogDriver() {
     while (std::chrono::steady_clock::now() < deadline) {
         bool all_online = true;
         for (int i = 0; i < NUM_JOINTS; ++i) {
-            if (!motor_controller_->IsMotorOnline(motor_indices_[i])) {
+            if (!motor_initialized_[i] ||
+                !motor_controller_->IsMotorOnline(motor_indices_[i])) {
                 all_online = false;
                 break;
             }
@@ -69,7 +82,8 @@ DogDriver::DogDriver() {
     }
     int online_count = 0;
     for (int i = 0; i < NUM_JOINTS; ++i) {
-        if (motor_controller_->IsMotorOnline(motor_indices_[i])) ++online_count;
+        if (motor_initialized_[i] &&
+            motor_controller_->IsMotorOnline(motor_indices_[i])) ++online_count;
     }
     std::cout << "[DogDriver] Ready: " << online_count << "/" << NUM_JOINTS
               << " motors online" << std::endl;
@@ -114,6 +128,7 @@ int DogDriver::SetJointPosition(int joint_idx, float pos) {
 int DogDriver::SetAllJointPositions(const std::array<float, NUM_JOINTS>& pos) {
     int ret = 0;
     for (int i = 0; i < NUM_JOINTS; ++i) {
+        if (!motor_initialized_[i]) continue;
         float motor_delta = pos[i];
         if (i >= 8) motor_delta *= KNEE_GEAR_RATIO;
         float motor_pos = kJointDirection[i] * motor_delta + kOffsets[i];
@@ -135,7 +150,18 @@ int DogDriver::EnableAll() {
 int DogDriver::DisableAll() {
     int ret = 0;
     for (int i = 0; i < NUM_JOINTS; ++i) {
+        if (!motor_initialized_[i]) continue;
         int r = motor_controller_->DisableMotor(motor_indices_[i]);
+        if (r != 0 && ret == 0) ret = r;
+    }
+    return ret;
+}
+
+int DogDriver::ClearAllErrors() {
+    int ret = 0;
+    for (int i = 0; i < NUM_JOINTS; ++i) {
+        if (!motor_initialized_[i]) continue;
+        int r = motor_controller_->ClearMotor(motor_indices_[i]);
         if (r != 0 && ret == 0) ret = r;
     }
     return ret;
@@ -148,7 +174,14 @@ int DogDriver::EnableJoint(int joint_idx) {
 
 int DogDriver::DisableJoint(int joint_idx) {
     if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return -1;
+    if (!motor_initialized_[joint_idx]) return -1;
     return motor_controller_->DisableMotor(motor_indices_[joint_idx]);
+}
+
+int DogDriver::ClearJointError(int joint_idx) {
+    if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return -1;
+    if (!motor_initialized_[joint_idx]) return -1;
+    return motor_controller_->ClearMotor(motor_indices_[joint_idx]);
 }
 
 int DogDriver::SetZero(int joint_idx) {
@@ -168,6 +201,7 @@ int DogDriver::DisableAutoReport(int joint_idx) {
 
 int DogDriver::SetMITParams(int joint_idx, float kp, float kd) {
     if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return -1;
+    if (!motor_initialized_[joint_idx]) return -1;
     MIT_params params;
     params.kp = kp;
     params.kd = kd;
@@ -176,9 +210,27 @@ int DogDriver::SetMITParams(int joint_idx, float kp, float kd) {
     return motor_controller_->SetMITParams(motor_indices_[joint_idx], params);
 }
 
+int DogDriver::SetTorqueLimit(int joint_idx, float torque_limit) {
+    if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return -1;
+    if (!motor_initialized_[joint_idx]) return -1;
+    auto motor_state = motor_controller_->GetMotorState(motor_indices_[joint_idx]);
+    MIT_params params;
+    params.kp = DEFAULT_KP;
+    params.kd = DEFAULT_KD;
+    params.vel_limit = MAX_SPEED;
+    params.torque_limit = torque_limit;
+    return motor_controller_->SetMITParams(motor_indices_[joint_idx], params);
+}
+
 bool DogDriver::IsJointOnline(int joint_idx) const {
     if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return false;
+    if (!motor_initialized_[joint_idx]) return false;
     return motor_controller_->IsMotorOnline(motor_indices_[joint_idx]);
+}
+
+bool DogDriver::IsJointInitialized(int joint_idx) const {
+    if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return false;
+    return motor_initialized_[joint_idx];
 }
 
 bool DogDriver::IsIMUConnected() const {

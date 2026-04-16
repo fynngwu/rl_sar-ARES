@@ -319,6 +319,32 @@ int RobstrideController::DisableMotor(int motor_idx) {
     return -1;
 }
 
+int RobstrideController::ClearMotor(int motor_idx) {
+    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
+        auto& motor = motor_data[motor_idx];
+        motor.enabled = false;
+        
+        struct can_frame frame;
+        std::memset(&frame, 0, sizeof(frame));
+        
+        uint32_t id = 0;
+        id |= (motor.motor_id & 0xFF);
+        id |= ((motor.host_id & 0xFF) << 8);
+        id |= (COMM_STOP << 24);
+        
+        frame.can_id = id | CAN_EFF_FLAG;
+        frame.can_dlc = 8;
+        frame.data[0] = 0x01;
+        
+        if (motor.can_iface) {
+            motor.can_iface->SendMessage(&frame);
+        }
+        return 0;
+    }
+    return -1;
+}
+
 int RobstrideController::EnableAutoReport(int motor_idx) {
     std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {

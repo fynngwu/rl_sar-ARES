@@ -119,10 +119,12 @@ public:
     // Enable/disable all 12 motors. Returns 0 on all success.
     int EnableAll();
     int DisableAll();
+    int ClearAllErrors();
 
-    // Enable/disable a single motor by joint index. Returns 0 on success.
+    // Enable/disable/clear a single motor by joint index. Returns 0 on success.
     int EnableJoint(int joint_idx);
     int DisableJoint(int joint_idx);
+    int ClearJointError(int joint_idx);
 
     // --- Configuration ---
 
@@ -138,10 +140,16 @@ public:
     // vel_limit and torque_limit use class defaults (MAX_SPEED, MAX_TORQUE).
     int SetMITParams(int joint_idx, float kp, float kd);
 
+    // Set MIT torque limit for one joint (Nm). Returns 0 on success.
+    int SetTorqueLimit(int joint_idx, float torque_limit);
+
     // --- Status queries ---
 
     // Returns true if motor has responded within the last 500ms.
     bool IsJointOnline(int joint_idx) const;
+
+    // Returns true if motor was successfully initialized at construction time.
+    bool IsJointInitialized(int joint_idx) const;
 
     // Returns true if IMU was successfully opened at construction time.
     bool IsIMUConnected() const;
@@ -152,6 +160,7 @@ private:
     std::unique_ptr<IMUComponent> imu_;
 
     std::array<int, NUM_JOINTS> motor_indices_;
+    std::array<bool, NUM_JOINTS> motor_initialized_;
     bool imu_connected_ = false;
 
     static constexpr std::array<int, NUM_JOINTS> kMotorIds = {

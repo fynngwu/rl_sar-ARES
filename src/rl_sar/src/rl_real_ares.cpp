@@ -9,9 +9,8 @@
  *   - Projected gravity received directly from driver (in Imu.linear_acceleration),
  *     NOT computed from quaternion
  *   - No kp/kd sent in motor commands (set at driver init)
- *   - ARES driver joint ordering: HipA(LF/LR/RF/RR), HipF(LF/LR/RF/RR), Knee(LF/LR/RF/RR)
- *   - Policy uses URDF ordering: FL(0-2), RL(3-5), FR(6-8), RR(9-11)
- *   - joint_mapping reorders between driver and policy at I/O boundaries
+ *   - /motor_feedback and /motor_command use FL RL FR RR ordering (URDF order)
+ *   - ares_driver_node handles reordering to/from driver internal order
  *   - 6-frame observation history
  */
 
@@ -212,33 +211,6 @@ private:
                     default_dof_pos_.push_back(p.as<float>());
             }
 
-            if (robot_config["joint_mapping"])
-            {
-                joint_mapping_.clear();
-                for (const auto &m : robot_config["joint_mapping"])
-                    joint_mapping_.push_back(m.as<int>());
-            }
-            else if (base_config["joint_mapping"])
-            {
-                joint_mapping_.clear();
-                for (const auto &m : base_config["joint_mapping"])
-                    joint_mapping_.push_back(m.as<int>());
-            }
-
-            if (!joint_mapping_.empty())
-            {
-                driver_to_urdf_.resize(joint_mapping_.size());
-                for (size_t urdf_i = 0; urdf_i < joint_mapping_.size(); ++urdf_i)
-                {
-                    int driver_i = joint_mapping_[urdf_i];
-                    driver_to_urdf_[driver_i] = static_cast<int>(urdf_i);
-                }
-                RCLCPP_INFO(this->get_logger(), "joint_mapping (urdf_i -> driver_i): %s",
-                            FormatIntVector(joint_mapping_).c_str());
-                RCLCPP_INFO(this->get_logger(), "driver_to_urdf (driver_i -> urdf_i): %s",
-                            FormatIntVector(driver_to_urdf_).c_str());
-            }
-
             // PD gains are set at driver init (kp=40, kd=0.5).
             // We still load them for logging/compatibility, but do NOT send per-command.
             if (robot_config["fixed_kp"])
@@ -407,36 +379,12 @@ private:
                 output_dof_pos = default_dof_pos_;
         }
 
-        // Publish motor command
         sensor_msgs::msg::JointState cmd_msg;
         cmd_msg.header.stamp = this->now();
-
-        static const char* names[12] = {
-            "lf_hipa", "lr_hipa", "rf_hipa", "rr_hipa",
-            "lf_hipf", "lr_hipf", "rf_hipf", "rr_hipf",
-            "lf_knee", "lr_knee", "rf_knee", "rr_knee"
-        };
-
-        // driver_to_urdf_[driver_i] = urdf_i
-        // 遍历driver索引，用映射找到对应的urdf索引取值
-        if (!driver_to_urdf_.empty())
+        for (int i = 0; i < num_of_dofs_; ++i)
         {
-            for (int driver_i = 0; driver_i < num_of_dofs_; ++driver_i)
-            {
-                int urdf_i = driver_to_urdf_[driver_i];
-                cmd_msg.name.push_back(names[driver_i]);  // names按driver顺序定义
-                cmd_msg.position.push_back(output_dof_pos[urdf_i]);  // 用urdf索引取值
-            }
+            cmd_msg.position.push_back(output_dof_pos[i]);
         }
-        else
-        {
-            for (int i = 0; i < num_of_dofs_; ++i)
-            {
-                cmd_msg.name.push_back(names[i]);
-                cmd_msg.position.push_back(output_dof_pos[i]);
-            }
-        }
-
         motor_command_pub_->publish(cmd_msg);
     }
 
@@ -556,33 +504,10 @@ private:
         std::lock_guard<std::mutex> lock(data_mutex_);
 
         size_t count = std::min(msg->position.size(), static_cast<size_t>(num_of_dofs_));
-
-        if (!joint_mapping_.empty())
+        for (size_t i = 0; i < count; ++i)
         {
-            std::array<float, 12> raw_pos{};
-            std::array<float, 12> raw_vel{};
-            for (size_t i = 0; i < count; ++i)
-            {
-                raw_pos[i] = msg->position[i];
-                raw_vel[i] = msg->velocity[i];
-            }
-            for (size_t urdf_i = 0; urdf_i < joint_mapping_.size(); ++urdf_i)
-            {
-                int driver_i = joint_mapping_[urdf_i];
-                if (driver_i < static_cast<int>(count))
-                {
-                    joint_pos_[urdf_i] = raw_pos[driver_i];
-                    joint_vel_[urdf_i] = raw_vel[driver_i];
-                }
-            }
-        }
-        else
-        {
-            for (size_t i = 0; i < count; ++i)
-            {
-                joint_pos_[i] = msg->position[i];
-                joint_vel_[i] = msg->velocity[i];
-            }
+            joint_pos_[i] = msg->position[i];
+            joint_vel_[i] = msg->velocity[i];
         }
 
         motor_feedback_received_ = true;
@@ -735,20 +660,6 @@ private:
         return oss.str();
     }
 
-    std::string FormatIntVector(const std::vector<int> &values) const
-    {
-        std::ostringstream oss;
-        oss << "[";
-        for (size_t i = 0; i < values.size(); ++i)
-        {
-            if (i > 0)
-                oss << ", ";
-            oss << values[i];
-        }
-        oss << "]";
-        return oss.str();
-    }
-
     // ROS2 communication
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_command_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_sub_;
@@ -794,9 +705,6 @@ private:
     std::vector<float> clip_actions_lower_;
     std::vector<float> kp_;  // Loaded for logging only — NOT sent per-command
     std::vector<float> kd_;  // Loaded for logging only — NOT sent per-command
-    std::vector<int> joint_mapping_;   // driver_index = joint_mapping_[urdf_index]
-    std::vector<int> driver_to_urdf_;  // urdf_index = driver_to_urdf_[driver_index]
-
     // Basic parameters
     std::string robot_name_;
     int num_of_dofs_;
