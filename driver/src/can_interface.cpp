@@ -2,7 +2,6 @@
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
-#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
@@ -38,24 +37,21 @@ CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1),
         return;
     }
 
-    // Non-blocking writes: if the TX queue is full (e.g. bus-off with no ACK),
-    // write() returns EAGAIN instead of blocking indefinitely.
-    int flags = fcntl(can_socket, F_GETFL, 0);
-    fcntl(can_socket, F_SETFL, flags | O_NONBLOCK);
+    // Read timeout (matches UIKA: 5ms)
+    struct timeval timeout{};
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 5000;
+    setsockopt(can_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    // Writes are blocking (default socket behavior, matches UIKA)
 
     running = true;
     can_thread = std::thread([this]() {
         struct can_frame frame;
         while (running) {
-            // Blocking read
             int nbytes = read(can_socket, &frame, sizeof(struct can_frame));
 
             if (nbytes < 0) {
-                // When socket is closed in destructor, read returns -1
-                if (errno != EAGAIN && errno != EBADF) {
-                    // perror("Read"); 
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
+                if (errno == EBADF) break;
                 continue;
             }
 
@@ -114,12 +110,9 @@ const char* CANInterface::GetName() const {
 
 int CANInterface::SendMessage(const struct can_frame* frame) {
     if (can_socket < 0) return -1;
-    
     int nbytes = write(can_socket, frame, sizeof(struct can_frame));
     if (nbytes != sizeof(struct can_frame)) {
-        // EAGAIN/EWOULDBLOCK/ENOBUFS: TX queue full (bus-off or no ACK) — skip silently.
-        if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ENOBUFS)
-            perror("CAN write");
+        perror("CAN write");
         return -1;
     }
     return 0;
