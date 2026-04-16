@@ -42,6 +42,7 @@ public:
     int SendMITCommand(int motor_idx, float pos);
     int EnableMotor(int motor_idx);
     int DisableMotor(int motor_idx);
+    int ClearMotor(int motor_idx);
     bool IsMotorOnline(int motor_idx);
     int EnableAutoReport(int motor_idx);
     int DisableAutoReport(int motor_idx);

@@ -1,3 +1,121 @@
+# ARES Driver Threading Refactor — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Refactor `ares_driver_node.cpp` from a single 200Hz control loop to a wall_timer (100Hz feedback) + worker_thread (200Hz commands) pattern matching the vendor `robstride_ros_sample`, with position limits and diagnostics.
+
+**Architecture:** Two concurrency paths — a ROS2 `wall_timer_` at 10ms reads motor state/IMU/gamepad and publishes; a `std::thread` at 5ms sends clamped joint positions. The worker thread gates on `received_first_command_` to avoid sending zeros. constexpr position limits per joint are applied before every command send.
+
+**Tech Stack:** C++17, ROS2 (rclcpp, sensor_msgs, geometry_msgs), DogDriver shared library (libdog_driver.so)
+
+**Design spec:** `docs/superpowers/specs/2026-04-16-ares-driver-threading-design.md`
+
+---
+
+## File Changed
+
+| File | Action |
+|------|--------|
+| `src/rl_sar/src/ares_driver_node.cpp` | Rewrite (single file change per spec) |
+
+No other files are touched. No CMakeLists changes needed — the build target already exists.
+
+---
+
+## Position Limits Derivation
+
+Vendor `MOTOR_LIMITS` (in their "joint space", i.e. user-facing before transforms):
+
+| Vendor Index | Joint | Min | Max |
+|---|---|---|---|
+| 0 | fl_hip | -1.50 | 0.00 |
+| 1 | fl_thigh | -0.79 | 0.79 |
+| 2 | fl_calf | 0.187 | 2.07 |
+| 3 | fr_hip | 0.00 | 1.50 |
+| 4 | fr_thigh | -0.79 | 0.79 |
+| 5 | fr_calf | -2.07 | -0.187 |
+| 6 | rl_hip | 0.00 | 1.50 |
+| 7 | rl_thigh | -0.79 | 0.79 |
+| 8 | rl_calf | 0.187 | 2.07 |
+| 9 | rr_hip | -1.50 | 0.00 |
+| 10 | rr_thigh | -0.79 | 0.79 |
+| 11 | rr_calf | -2.07 | -0.187 |
+
+Mapping to DogDriver joint order (fl→LF, fr→RF, rl→LR, rr→RR; hip→HipA, thigh→HipF, calf→Knee):
+
+| DogDriver Index | Joint | Vendor Index | Min | Max |
+|---|---|---|---|---|
+| 0 | LF_HipA | 0 (fl_hip) | -1.50 | 0.00 |
+| 1 | LR_HipA | 6 (rl_hip) | 0.00 | 1.50 |
+| 2 | RF_HipA | 3 (fr_hip) | 0.00 | 1.50 |
+| 3 | RR_HipA | 9 (rr_hip) | -1.50 | 0.00 |
+| 4 | LF_HipF | 1 (fl_thigh) | -0.79 | 0.79 |
+| 5 | LR_HipF | 7 (rl_thigh) | -0.79 | 0.79 |
+| 6 | RF_HipF | 4 (fr_thigh) | -0.79 | 0.79 |
+| 7 | RR_HipF | 10 (rr_thigh) | -0.79 | 0.79 |
+| 8 | LF_Knee | 2 (fl_calf) | 0.187 | 2.07 |
+| 9 | LR_Knee | 8 (rl_calf) | 0.187 | 2.07 |
+| 10 | RF_Knee | 5 (fr_calf) | -2.07 | -0.187 |
+| 11 | RR_Knee | 11 (rr_calf) | -2.07 | -0.187 |
+
+---
+
+### Task 1: Add position limits constexpr array
+
+**Files:**
+- Modify: `src/rl_sar/src/ares_driver_node.cpp:31-35` (after `kJointNames`)
+
+- [ ] **Step 1: Add the `kPositionLimits` constexpr array**
+
+After the `kJointNames` array (line 35), insert:
+
+```cpp
+// Joint-space position limits (rad), derived from vendor MOTOR_LIMITS
+// mapped to DogDriver joint order.
+// DogDriver joint order: LF_HipA(0) LR_HipA(1) RF_HipA(2) RR_HipA(3)
+//                         LF_HipF(4) LR_HipF(5) RF_HipF(6) RR_HipF(7)
+//                         LF_Knee(8) LR_Knee(9) RF_Knee(10) RR_Knee(11)
+static constexpr std::array<std::pair<float,float>, DogDriver::NUM_JOINTS> kPositionLimits = {{
+    {-1.50f,  0.00f},   // 0  LF_HipA
+    { 0.00f,  1.50f},   // 1  LR_HipA
+    { 0.00f,  1.50f},   // 2  RF_HipA
+    {-1.50f,  0.00f},   // 3  RR_HipA
+    {-0.79f,  0.79f},   // 4  LF_HipF
+    {-0.79f,  0.79f},   // 5  LR_HipF
+    {-0.79f,  0.79f},   // 6  RF_HipF
+    {-0.79f,  0.79f},   // 7  RR_HipF
+    { 0.187f, 2.07f},   // 8  LF_Knee
+    { 0.187f, 2.07f},   // 9  LR_Knee
+    {-2.07f, -0.187f},  // 10 RF_Knee
+    {-2.07f, -0.187f},  // 11 RR_Knee
+}};
+```
+
+Also add the `<utility>` include at the top (for `std::pair`):
+
+```cpp
+#include <utility>
+```
+
+- [ ] **Step 2: Build to verify compilation**
+
+Run: `cd /home/wufy/projects/my_ares_himloco/rl_sar-ARES && colcon build --packages-select rl_sar 2>&1 | tail -5`
+Expected: Build succeeds (the constexpr is unused so far but must compile).
+
+---
+
+### Task 2: Replace control loop with wall_timer + worker_thread
+
+**Files:**
+- Modify: `src/rl_sar/src/ares_driver_node.cpp` — full class rewrite
+
+- [ ] **Step 1: Rewrite the node class**
+
+Replace the entire `ares_driver_node.cpp` with the new implementation. The new file keeps the same includes (plus `<utility>`), same `kJointNames`, same `kPositionLimits`, and rewrites the `AresDriverNode` class.
+
+Full replacement file content:
+
+```cpp
 /*
  * ARES Driver Node — ROS2 wrapper for libdog_driver.so
  *
@@ -9,8 +127,10 @@
  * Subscribes:
  *   /motor_command   (sensor_msgs/JointState) — 12 joint target positions
  *
- *   /motor_feedback and /motor_command use FL RL FR RR ordering (URDF order)
- *   - ares_driver_node handles reordering to/from driver internal order
+ * Threading:
+ *   wall_timer_  (10ms, 100Hz) — publish motor feedback, IMU, gamepad
+ *   worker_thread_ (5ms, 200Hz) — send clamped position commands to motors
+ *   Worker thread gates on first command to avoid sending zeros.
  */
 
 #include "rclcpp/rclcpp.hpp"
@@ -30,40 +150,30 @@
 #include <utility>
 
 static constexpr const char* kJointNames[DogDriver::NUM_JOINTS] = {
-    "fl_hipa", "fl_hipf", "fl_knee",
-    "rl_hipa", "rl_hipf", "rl_knee",
-    "fr_hipa", "fr_hipf", "fr_knee",
-    "rr_hipa", "rr_hipf", "rr_knee"
+    "lf_hipa", "lr_hipa", "rf_hipa", "rr_hipa",
+    "lf_hipf", "lr_hipf", "rf_hipf", "rr_hipf",
+    "lf_knee", "lr_knee", "rf_knee", "rr_knee"
 };
 
-// Position limits in FL RL FR RR order (joint-space, residual without offset)
-// Driver order: HipA(LF/LR/RF/RR) HipF(LF/LR/RF/RR) Knee(LF/LR/RF/RR)
+// Joint-space position limits (rad), derived from vendor MOTOR_LIMITS
+// mapped to DogDriver joint order.
+// DogDriver joint order: LF_HipA(0) LR_HipA(1) RF_HipA(2) RR_HipA(3)
+//                         LF_HipF(4) LR_HipF(5) RF_HipF(6) RR_HipF(7)
+//                         LF_Knee(8) LR_Knee(9) RF_Knee(10) RR_Knee(11)
 static constexpr std::array<std::pair<float,float>, DogDriver::NUM_JOINTS> kPositionLimits = {{
-    {-0.7853982f,  0.7853982f},  // 0  FL_HipA
-    {-1.2217658f,  0.8726683f},  // 1  FL_HipF
-    {-1.2217299f,  0.6f},        // 2  FL_Knee
-    {-0.7853982f,  0.7853982f},  // 3  RL_HipA
-    {-1.2217305f,  0.8726683f},  // 4  RL_HipF
-    {-1.2217299f,  0.6f},        // 5  RL_Knee
-    {-0.7853982f,  0.7853982f},  // 6  FR_HipA
-    {-0.8726999f,  1.2217342f},  // 7  FR_HipF
-    {-0.6f,        1.2217287f},  // 8  FR_Knee
-    {-0.7853982f,  0.7853982f},  // 9  RR_HipA
-    {-0.8726999f,  1.2217305f},  // 10 RR_HipF
-    {-0.6f,        1.2217287f},  // 11 RR_Knee
+    {-1.50f,  0.00f},   // 0  LF_HipA
+    { 0.00f,  1.50f},   // 1  LR_HipA
+    { 0.00f,  1.50f},   // 2  RF_HipA
+    {-1.50f,  0.00f},   // 3  RR_HipA
+    {-0.79f,  0.79f},   // 4  LF_HipF
+    {-0.79f,  0.79f},   // 5  LR_HipF
+    {-0.79f,  0.79f},   // 6  RF_HipF
+    {-0.79f,  0.79f},   // 7  RR_HipF
+    { 0.187f, 2.07f},   // 8  LF_Knee
+    { 0.187f, 2.07f},   // 9  LR_Knee
+    {-2.07f, -0.187f},  // 10 RF_Knee
+    {-2.07f, -0.187f},  // 11 RR_Knee
 }};
-
-// Torque limit for MIT commands (Nm)
-static constexpr float TORQUE_LIMIT = 17.0f;
-
-// topic_index -> driver_index (FL RL FR RR -> driver order)
-static constexpr int kTopicToDriver[DogDriver::NUM_JOINTS] = {
-    0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11
-};
-// driver_index -> topic_index (driver order -> FL RL FR RR)
-static constexpr int kDriverToTopic[DogDriver::NUM_JOINTS] = {
-    0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11
-};
 
 class AresDriverNode : public rclcpp::Node
 {
@@ -85,11 +195,6 @@ public:
 
         RCLCPP_INFO(this->get_logger(), "DogDriver ready. IMU connected: %s",
                     driver_->IsIMUConnected() ? "yes" : "no");
-
-        for (int i = 0; i < DogDriver::NUM_JOINTS; ++i) {
-            driver_->SetTorqueLimit(i, TORQUE_LIMIT);
-        }
-        RCLCPP_INFO(this->get_logger(), "Torque limit set to %.1f Nm for all joints", TORQUE_LIMIT);
 
         // --- Publishers ---
         motor_feedback_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
@@ -128,10 +233,8 @@ public:
         running_ = false;
         if (worker_thread_.joinable())
             worker_thread_.join();
-        if (driver_) {
+        if (driver_)
             driver_->DisableAll();
-            driver_->ClearAllErrors();
-        }
         RCLCPP_INFO(this->get_logger(), "ARES Driver Node stopped");
     }
 
@@ -156,10 +259,9 @@ private:
         feedback_msg.header.stamp = this->now();
         for (int i = 0; i < DogDriver::NUM_JOINTS; ++i)
         {
-            int di = kTopicToDriver[i];
             feedback_msg.name.push_back(kJointNames[i]);
-            feedback_msg.position.push_back(joint_states.position[di]);
-            feedback_msg.velocity.push_back(joint_states.velocity[di]);
+            feedback_msg.position.push_back(joint_states.position[i]);
+            feedback_msg.velocity.push_back(joint_states.velocity[i]);
         }
         motor_feedback_pub_->publish(feedback_msg);
 
@@ -227,10 +329,7 @@ private:
                                                 kPositionLimits[i].first,
                                                 kPositionLimits[i].second);
 
-            std::array<float, DogDriver::NUM_JOINTS> driver_target;
-            for (int i = 0; i < DogDriver::NUM_JOINTS; ++i)
-                driver_target[i] = clamped_target[kDriverToTopic[i]];
-            driver_->SetAllJointPositions(driver_target);
+            driver_->SetAllJointPositions(clamped_target);
 
             auto send_duration = std::chrono::steady_clock::now() - send_start;
             max_send_duration = std::max(max_send_duration, send_duration);
@@ -301,3 +400,62 @@ int main(int argc, char **argv)
     rclcpp::shutdown();
     return 0;
 }
+```
+
+Key changes from the original:
+- `control_thread_` → `feedback_timer_` (wall_timer, 10ms) + `worker_thread_` (std::thread, 5ms)
+- `has_new_command_` → `received_first_command_` (atomic<bool>, one-way gate)
+- FeedbackTimerCallback: publishes motor feedback + IMU + gamepad (no motor commands)
+- CommandLoop: first-command gate → clamp limits → send positions → diagnostics
+- `kPositionLimits` array with clamping via `std::clamp`
+- Per-second diagnostic log + overrun warning
+- Clock catchup on major drift (`next_tick` reset if >1 period behind)
+
+- [ ] **Step 2: Build to verify compilation**
+
+Run: `cd /home/wufy/projects/my_ares_himloco/rl_sar-ARES && colcon build --packages-select rl_sar 2>&1 | tail -10`
+Expected: Build succeeds with no errors.
+
+---
+
+### Task 3: Commit the refactor
+
+- [ ] **Step 1: Stage and commit**
+
+Run:
+```bash
+cd /home/wufy/projects/my_ares_himloco/rl_sar-ARES
+git add src/rl_sar/src/ares_driver_node.cpp
+git commit -m "refactor(driver): split control loop into wall_timer + worker_thread
+
+Align threading model with vendor robstride_ros_sample:
+- wall_timer (100Hz): publish motor feedback, IMU, gamepad
+- worker_thread (200Hz): send position commands with first-command gate
+- Add constexpr joint position limits with std::clamp before send
+- Add per-second diagnostics (avg_hz, max_send_ms) and overrun warnings
+
+No DogDriver API changes. No custom messages. Single file change."
+```
+
+---
+
+### Task 4: Verify on hardware (manual, no automated test)
+
+> **Note:** This project has no unit test framework for the driver node. Verification is done by running on the robot.
+
+- [ ] **Step 1: Deploy and run**
+
+Run:
+```bash
+cd /home/wufy/projects/my_ares_himloco/rl_sar-ARES
+colcon build --packages-select rl_sar
+ros2 run rl_sar ares_driver_node
+```
+
+Expected observations:
+1. Node prints "Waiting for first command..." periodically
+2. No motor commands sent until RL node publishes to `/motor_command`
+3. After first command: prints "First command received! Starting motor control."
+4. Per-second log: `Motor send diag: loops=~200 avg_hz=~200.0 max_send_ms=<X>`
+5. `/motor_feedback` publishes at ~100Hz, `/imu/data` at ~100Hz
+6. Motor movement matches expected behavior — no jumps to zero
