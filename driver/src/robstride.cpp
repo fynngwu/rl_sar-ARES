@@ -105,22 +105,9 @@ RobstrideController::RobstrideController() : running(false) {
                 std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
                 for (size_t i = 0; i < motor_data.size(); ++i) {
                     auto& motor = motor_data[i];
-                    // Check for timeout (500ms)
                     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - motor.last_online_time).count();
                     if (duration > 500) {
                         motor.online = false;
-                    }
-
-                    // If offline but enabled, keep sending Enable command
-                    if (!motor.online && motor.enabled && motor.offline_count++ == 10) {
-                        motor.offline_count = 0;
-                        // Re-send Enable command
-                        // Note: EnableMotor just sets the flag and sends command once usually, 
-                        // but here we want to re-trigger the send logic.
-                        // We can call EnableMotor again, or extract the send logic.
-                        // To avoid spamming too fast, we might want to rate limit this, 
-                        // but the requirement says "keep sending". 10ms loop is reasonably fast.
-                        EnableMotor(i); 
                     }
                 }
             }
