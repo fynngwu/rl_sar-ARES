@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+    <name>rl_sar</name>
+    <version>4.0.0</version>
+    <description>RL policy inference for ARES quadruped robot</description>
+
+    <maintainer email="wufy@users.noreply.github.com">wufy</maintainer>
+
+    <license>Apache-2.0</license>
+
+    <buildtool_depend>ament_cmake</buildtool_depend>
+    <depend>rclcpp</depend>
+    <depend>std_msgs</depend>
+    <depend>geometry_msgs</depend>
+    <depend>sensor_msgs</depend>
+    <depend>yaml-cpp</depend>
+
+    <export>
+        <build_type>ament_cmake</build_type>
+    </export>
+</package>
