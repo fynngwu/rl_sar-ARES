@@ -1,11 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(rl_sar VERSION 4.0.0 LANGUAGES CXX)
 
-# Set C++ standard globally
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# System environment detection
 set(SYSTEM_TYPE ${CMAKE_SYSTEM_NAME})
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -26,24 +24,18 @@ elseif(UPPER_BUILD_TYPE STREQUAL "RELEASE")
     add_compile_options(-O3)
 endif()
 
-# Get project root directory
 get_filename_component(PROJECT_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
-# Dog driver directory
 set(DRIVER_DIR "${PROJECT_ROOT_DIR}/driver")
 
 add_definitions(-DCMAKE_CURRENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_definitions(-DPOLICY_DIR="${PROJECT_ROOT_DIR}/policy")
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
-# ROS2 dependencies
-find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(ament_index_cpp REQUIRED)
-find_package(rosidl_typesupport_cpp REQUIRED)
 
 # NOTE: No "interfaces" package — ARES uses standard ROS2 messages only
 
@@ -267,49 +259,35 @@ if(SYSTEM_TYPE STREQUAL "Linux")
         observation_buffer
         ${YAML_CPP_LIBRARIES}
         Threads::Threads
+        rclcpp::rclcpp
+        sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
+        geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
     )
-    ament_target_dependencies(ares
-        rclcpp
-        std_msgs
-        geometry_msgs
-        sensor_msgs
-    )
-    install(TARGETS ares DESTINATION lib/${PROJECT_NAME})
 
-    # executable for ARES driver node (wraps libdog_driver.so)
     if(DOG_DRIVER_LIB)
         add_executable(ares_driver_node src/ares_driver_node.cpp)
         target_link_libraries(ares_driver_node
             dog_driver
+            ${YAML_CPP_LIBRARIES}
             Threads::Threads
+            rclcpp::rclcpp
+            sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
+            geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
         )
-        ament_target_dependencies(ares_driver_node
-            rclcpp
-            sensor_msgs
-            geometry_msgs
-        )
-        install(TARGETS ares_driver_node DESTINATION lib/${PROJECT_NAME})
     endif()
 
-    # Test: ONNX smoke test (standalone, no ROS2 needed)
     add_executable(test_onnx_smoke test/test_onnx_smoke.cpp)
     target_link_libraries(test_onnx_smoke
         inference_runtime
         observation_buffer
     )
 
-    # Test: driver feedback reader (ROS2 node, subscribes to /motor_feedback + /imu/data)
     add_executable(test_driver_feedback test/test_driver_feedback.cpp)
-    ament_target_dependencies(test_driver_feedback
-        rclcpp
-        sensor_msgs
+    target_link_libraries(test_driver_feedback
+        rclcpp::rclcpp
+        sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
     )
 endif()
-
-# Install launch files (if any)
-# install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
-
-ament_package()
 
 message(STATUS "========================================")
 message(STATUS "       RL_SAR Build Configuration       ")

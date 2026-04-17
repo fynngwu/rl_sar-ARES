@@ -28,6 +28,9 @@
 #include <array>
 #include <string>
 #include <utility>
+#include <fstream>
+
+#include "yaml-cpp/yaml.h"
 
 static constexpr const char* kJointNames[DogDriver::NUM_JOINTS] = {
     "fl_hipa", "fl_hipf", "fl_knee",
@@ -71,9 +74,45 @@ public:
     AresDriverNode()
         : Node("ares_driver_node"),
           running_(true),
-          received_first_command_(false)
+          received_first_command_(false),
+          gamepad_scale_(0.5f)
     {
         RCLCPP_INFO(this->get_logger(), "Initializing ARES Driver Node...");
+
+        std::string config_path = std::string(POLICY_DIR) + "/ares_himloco/himloco/config.yaml";
+        if (std::ifstream(config_path))
+        {
+            try
+            {
+                YAML::Node config = YAML::LoadFile(config_path);
+                std::string config_key = "ares_himloco";
+                if (config["ares_himloco/himloco"])
+                    config_key = "ares_himloco/himloco";
+                YAML::Node rc = config[config_key];
+
+                if (rc["fixed_kp"])
+                    for (const auto &v : rc["fixed_kp"]) config_kp_.push_back(v.as<float>());
+                if (rc["fixed_kd"])
+                    for (const auto &v : rc["fixed_kd"]) config_kd_.push_back(v.as<float>());
+                if (rc["torque_limits"])
+                    for (const auto &v : rc["torque_limits"]) config_torque_.push_back(v.as<float>());
+                if (rc["gamepad_scale"])
+                    gamepad_scale_ = rc["gamepad_scale"].as<float>();
+
+                RCLCPP_INFO(this->get_logger(), "Config loaded: %s", config_path.c_str());
+                RCLCPP_INFO(this->get_logger(), "  kp=%d kd=%d torque=%d gamepad_scale=%.2f",
+                            (int)config_kp_.size(), (int)config_kd_.size(),
+                            (int)config_torque_.size(), gamepad_scale_);
+            }
+            catch (const YAML::Exception &e)
+            {
+                RCLCPP_WARN(this->get_logger(), "Failed to parse config: %s", e.what());
+            }
+        }
+        else
+        {
+            RCLCPP_WARN(this->get_logger(), "Config not found: %s, using defaults", config_path.c_str());
+        }
 
         // --- DogDriver (opens CAN + IMU, enables motors, sets MIT params) ---
         try {
@@ -87,9 +126,13 @@ public:
                     driver_->IsIMUConnected() ? "yes" : "no");
 
         for (int i = 0; i < DogDriver::NUM_JOINTS; ++i) {
-            driver_->SetTorqueLimit(i, TORQUE_LIMIT);
+            float kp = (i < (int)config_kp_.size()) ? config_kp_[i] : DogDriver::DEFAULT_KP;
+            float kd = (i < (int)config_kd_.size()) ? config_kd_[i] : DogDriver::DEFAULT_KD;
+            float torque = (i < (int)config_torque_.size()) ? config_torque_[i] : TORQUE_LIMIT;
+            driver_->SetMITParams(i, kp, kd);
+            driver_->SetTorqueLimit(i, torque);
         }
-        RCLCPP_INFO(this->get_logger(), "Torque limit set to %.1f Nm for all joints", TORQUE_LIMIT);
+        RCLCPP_INFO(this->get_logger(), "MIT params set for all joints (kp from config, torque from config)");
 
         // --- Publishers ---
         motor_feedback_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
@@ -182,9 +225,9 @@ private:
         if (gamepad_ && gamepad_->IsConnected())
         {
             geometry_msgs::msg::Twist twist;
-            twist.linear.x  = gamepad_->GetAxis(1) * 0.5f;
+            twist.linear.x  = gamepad_->GetAxis(1) * gamepad_scale_;
             twist.linear.y  = 0.0f;
-            twist.angular.z = gamepad_->GetAxis(3) * 0.5f;
+            twist.angular.z = gamepad_->GetAxis(3) * gamepad_scale_;
             xbox_vel_pub_->publish(twist);
         }
     }
@@ -284,6 +327,11 @@ private:
 
     // Thread control
     std::atomic<bool> running_;
+
+    std::vector<float> config_kp_;
+    std::vector<float> config_kd_;
+    std::vector<float> config_torque_;
+    float gamepad_scale_;
 };
 
 int main(int argc, char **argv)
