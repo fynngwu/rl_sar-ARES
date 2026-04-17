@@ -34,7 +34,7 @@ class IMUComponent;
 //
 // Initialization (all done in constructor, ~1s):
 //   1. Opens CAN sockets + IMU serial port
-//   2. Binds all 12 motors with default MIT params (kp=40, kd=0.5)
+//   2. Binds all 12 motors with default MIT params (kp=30, kd=1.0)
 //   3. Enables all motors + double EnableAutoReport for reliability
 //   4. Waits up to 5s for all motors to report online
 //   5. Starts background threads for CAN RX, motor watchdog, IMU polling
@@ -71,8 +71,8 @@ public:
     static constexpr float KNEE_GEAR_RATIO = 1.667f;
     static constexpr float MAX_TORQUE = 17.0f;
     static constexpr float MAX_SPEED = 44.0f;
-    static constexpr float DEFAULT_KP = 40.0f;
-    static constexpr float DEFAULT_KD = 0.5f;
+    static constexpr float DEFAULT_KP = 30.0f;
+    static constexpr float DEFAULT_KD = 1.0f;
 
     struct JointState {
         std::array<float, NUM_JOINTS> position;  // rad, relative to zero offset
