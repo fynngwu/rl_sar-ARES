@@ -48,7 +48,6 @@ class ARSNode : public rclcpp::Node
 public:
     ARSNode()
         : Node("ares_rl_node"),
-          robot_name_("ares"),
           num_of_dofs_(12),
           dt_(0.005f),
           decimation_(4),
@@ -64,9 +63,6 @@ public:
           inference_time_ms_(0.0)
     {
         RCLCPP_INFO(this->get_logger(), "Initializing ARES RL Node...");
-
-        this->declare_parameter("robot_name", robot_name_);
-        this->get_parameter("robot_name", robot_name_);
 
         motor_command_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
             "/motor_command", 10);
@@ -115,36 +111,17 @@ private:
     bool InitRL()
     {
         std::string policy_dir = std::string(POLICY_DIR);
-        std::string config_path = policy_dir + "/" + robot_name_ + "/himloco/config.yaml";
-        std::string model_subdir = "himloco/";
+        std::string config_path = policy_dir + "/ares_himloco/himloco/config.yaml";
         std::string model_name_from_config;
-
-        if (!std::ifstream(config_path))
-        {
-            config_path = policy_dir + "/" + robot_name_ + "/config.yaml";
-            model_subdir.clear();
-        }
 
         RCLCPP_INFO(this->get_logger(), "Loading config: %s", config_path.c_str());
 
         try
         {
             YAML::Node config = YAML::LoadFile(config_path);
-
-            std::string config_key = robot_name_;
-            if (config[robot_name_ + "/himloco"])
-                config_key = robot_name_ + "/himloco";
-
-            YAML::Node robot_config = config[config_key];
-            YAML::Node base_config;
-
-            std::string base_config_path = policy_dir + "/" + robot_name_ + "/base.yaml";
-            if (std::ifstream(base_config_path))
-                base_config = YAML::LoadFile(base_config_path)[robot_name_];
-
+            YAML::Node robot_config = config["ares_himloco/himloco"];
             #define GET_PARAM(key, var) \
-                if (robot_config[#key]) var = robot_config[#key].as<decltype(var)>(); \
-                else if (base_config[#key]) var = base_config[#key].as<decltype(var)>();
+                if (robot_config[#key]) var = robot_config[#key].as<decltype(var)>();
 
             GET_PARAM(dt, dt_)
             GET_PARAM(decimation, decimation_)
@@ -204,37 +181,17 @@ private:
                 for (const auto &p : robot_config["default_dof_pos"])
                     default_dof_pos_.push_back(p.as<float>());
             }
-            else if (base_config["default_dof_pos"])
-            {
-                default_dof_pos_.clear();
-                for (const auto &p : base_config["default_dof_pos"])
-                    default_dof_pos_.push_back(p.as<float>());
-            }
 
-            // PD gains are set at driver init (kp=40, kd=0.5).
-            // We still load them for logging/compatibility, but do NOT send per-command.
             if (robot_config["fixed_kp"])
             {
                 kp_.clear();
                 for (const auto &s : robot_config["fixed_kp"])
                     kp_.push_back(s.as<float>());
             }
-            else if (base_config["fixed_kp"])
-            {
-                kp_.clear();
-                for (const auto &s : base_config["fixed_kp"])
-                    kp_.push_back(s.as<float>());
-            }
             if (robot_config["fixed_kd"])
             {
                 kd_.clear();
                 for (const auto &s : robot_config["fixed_kd"])
-                    kd_.push_back(s.as<float>());
-            }
-            else if (base_config["fixed_kd"])
-            {
-                kd_.clear();
-                for (const auto &s : base_config["fixed_kd"])
                     kd_.push_back(s.as<float>());
             }
         }
@@ -249,11 +206,11 @@ private:
         std::string model_path;
         if (!model_name_from_config.empty())
         {
-            model_path = policy_dir + "/" + robot_name_ + "/" + model_subdir + model_name_from_config;
+            model_path = policy_dir + "/ares_himloco/himloco/" + model_name_from_config;
         }
         else
         {
-            std::string search_dir = policy_dir + "/" + robot_name_ + "/" + model_subdir;
+            std::string search_dir = policy_dir + "/ares_himloco/himloco/";
             model_path = FindLatestOnnx(search_dir);
             if (model_path.empty())
             {
@@ -706,7 +663,6 @@ private:
     std::vector<float> kp_;  // Loaded for logging only — NOT sent per-command
     std::vector<float> kd_;  // Loaded for logging only — NOT sent per-command
     // Basic parameters
-    std::string robot_name_;
     int num_of_dofs_;
     float dt_;
     int decimation_;
