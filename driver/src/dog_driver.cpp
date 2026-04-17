@@ -213,11 +213,7 @@ int DogDriver::SetMITParams(int joint_idx, float kp, float kd) {
 int DogDriver::SetTorqueLimit(int joint_idx, float torque_limit) {
     if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return -1;
     if (!motor_initialized_[joint_idx]) return -1;
-    auto motor_state = motor_controller_->GetMotorState(motor_indices_[joint_idx]);
-    MIT_params params;
-    params.kp = DEFAULT_KP;
-    params.kd = DEFAULT_KD;
-    params.vel_limit = MAX_SPEED;
+    auto params = motor_controller_->GetMITParams(motor_indices_[joint_idx]);
     params.torque_limit = torque_limit;
     return motor_controller_->SetMITParams(motor_indices_[joint_idx], params);
 }

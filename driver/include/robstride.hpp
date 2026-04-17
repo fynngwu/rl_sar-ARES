@@ -39,6 +39,7 @@ public:
     int BindMotor(const char* can_if, std::unique_ptr<struct MotorInfo> motor_info);
     struct motor_state GetMotorState(int motor_idx);
     int SetMITParams(int motor_idx, struct MIT_params mit_params);
+    struct MIT_params GetMITParams(int motor_idx);
     int SendMITCommand(int motor_idx, float pos);
     int EnableMotor(int motor_idx);
     int DisableMotor(int motor_idx);

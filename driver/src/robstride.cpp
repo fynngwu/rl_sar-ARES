@@ -155,7 +155,7 @@ int RobstrideController::BindMotor(const char* can_if, std::unique_ptr<struct Mo
     
     // Initialize default state/params
     data.state = {0.0f, 0.0f, 0.0f};
-    data.mit_params = {25.0f, 0.5f, 0.0f, 0.0f};
+    data.mit_params = {30.0f, 1.0f, 0.0f, 0.0f};
     
     // Register filter
     CANInterface::can_filter filter;
@@ -200,6 +200,14 @@ int RobstrideController::SetMITParams(int motor_idx, struct MIT_params mit_param
         return 0;
     }
     return -1;
+}
+
+struct MIT_params RobstrideController::GetMITParams(int motor_idx) {
+    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
+        return motor_data[motor_idx].mit_params;
+    }
+    return {0, 0, 0, 0};
 }
 
 int RobstrideController::SendMITCommand(int motor_idx, float pos) {

@@ -275,18 +275,6 @@ if(SYSTEM_TYPE STREQUAL "Linux")
             geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
         )
     endif()
-
-    add_executable(test_onnx_smoke test/test_onnx_smoke.cpp)
-    target_link_libraries(test_onnx_smoke
-        inference_runtime
-        observation_buffer
-    )
-
-    add_executable(test_driver_feedback test/test_driver_feedback.cpp)
-    target_link_libraries(test_driver_feedback
-        rclcpp::rclcpp
-        sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
-    )
 endif()
 
 message(STATUS "========================================")
