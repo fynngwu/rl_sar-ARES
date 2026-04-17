@@ -183,11 +183,7 @@ static int cmd_to_offset(const std::vector<int>& joints) {
         std::this_thread::sleep_for(STEP_DT);
     }
 
-    printf(g_running ? "Done. Disabling motors.\n" : "Aborted. Disabling motors.\n");
-    for (int j : all) {
-        ctx.ctrl->DisableMotor(ctx.motor_idx[j]);
-        ctx.ctrl->DisableAutoReport(ctx.motor_idx[j]);
-    }
+    printf(g_running ? "Done. Motors remain enabled.\n" : "Aborted. Motors remain enabled.\n");
     return 0;
 }
 
