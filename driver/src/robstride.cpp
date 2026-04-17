@@ -68,9 +68,8 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
             if (motor.motor_id == motor_id) {
                 motor.online = true;
                 motor.last_online_time = std::chrono::steady_clock::now();
-                
-                // Parse Error from reserved field (as per user snippet: data->err = (can_id->reserved) & 0x3f;)
-                // int err = reserved & 0x3F;
+                motor.error_code = reserved & 0x3F;
+                motor.pattern = (reserved >> 6) & 0x03;
                 
                 // Parse Data
                 if (frame->len >= 8) {
@@ -421,4 +420,12 @@ int RobstrideController::SetZero(int motor_idx){
         return 0;
     }
     return -1;
+}
+
+RobstrideController::MotorError RobstrideController::GetMotorError(int motor_idx) {
+    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
+        return {motor_data[motor_idx].error_code, motor_data[motor_idx].pattern};
+    }
+    return {0, 0};
 }
