@@ -12,6 +12,7 @@
 #include "robstride.hpp"
 
 #define JS_AXIS_LIMIT 64
+#define JS_BUTTON_LIMIT 64
 
 class ObsComponent {
 public:
@@ -25,6 +26,7 @@ public:
     Gamepad(const char* dev = "/dev/input/js0");
     ~Gamepad();
     float GetAxis(int axis) const;
+    bool GetButton(int button) const;
     bool IsConnected() const;
     std::string GetName() const;
 
@@ -34,7 +36,8 @@ private:
     std::thread read_thread;
     std::atomic<bool> running;
     mutable std::mutex data_mutex;
-    float axes[JS_AXIS_LIMIT]; // From linux/joystick.h
+    float axes[JS_AXIS_LIMIT];
+    bool buttons[JS_BUTTON_LIMIT];
 };
 
 class RoboObsFrame {
@@ -99,8 +102,6 @@ private:
 
     static int fd;
     static int s_iCurBaud;
-    static constexpr int c_uiBaud[] = {2400 , 4800 , 9600 , 19200 ,
-        38400 , 57600 , 115200 , 230400 , 460800 , 921600};
 };
 
 class JointComponent : public ObsComponent {

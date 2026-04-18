@@ -66,27 +66,12 @@ DogDriver::DogDriver() {
     imu_ = std::make_unique<IMUComponent>(kIMUDev);
     imu_connected_ = true;
 
-    std::cout << "[DogDriver] Waiting for motors online..." << std::endl;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (std::chrono::steady_clock::now() < deadline) {
-        bool all_online = true;
-        for (int i = 0; i < NUM_JOINTS; ++i) {
-            if (!motor_initialized_[i] ||
-                !motor_controller_->IsMotorOnline(motor_indices_[i])) {
-                all_online = false;
-                break;
-            }
-        }
-        if (all_online) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
     int online_count = 0;
     for (int i = 0; i < NUM_JOINTS; ++i) {
-        if (motor_initialized_[i] &&
-            motor_controller_->IsMotorOnline(motor_indices_[i])) ++online_count;
+        if (motor_initialized_[i]) ++online_count;
     }
     std::cout << "[DogDriver] Ready: " << online_count << "/" << NUM_JOINTS
-              << " motors online" << std::endl;
+              << " motors initialized" << std::endl;
 }
 
 DogDriver::~DogDriver() = default;
