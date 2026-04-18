@@ -114,36 +114,33 @@ std::vector<float> IMUComponent::GetObs() const {
     return obs;
 }
 
-void IMUComponent::AutoScanSensor() {
-    int i, iRetry;
-    char cBuff[1];
-    
-    for(i = 0; i < sizeof(c_uiBaud)/sizeof(int); i++) {
-        if(fd >= 0) serial_close(fd);
-        
-        s_iCurBaud = c_uiBaud[i];
-        fd = serial_open((unsigned char*)dev_path, s_iCurBaud);
-        
-        if(fd < 0) continue;
+// IMU baud rate - change here if your sensor uses a different baud rate
+static constexpr int kIMUBaud = 115200;
 
-        iRetry = 2;
-        do {
-            s_cDataUpdate = 0;
-            WitReadReg(AX, 3);
-            Delayms(200);
-            
-            while(serial_read_data(fd, (unsigned char*)cBuff, 1)) {
-                WitSerialDataIn(cBuff[0]);
-            }
-            
-            if(s_cDataUpdate != 0) {
-                std::cout << "IMU Connected at baud " << s_iCurBaud << std::endl;
-                return;
-            }
-            iRetry--;
-        } while(iRetry);
+void IMUComponent::AutoScanSensor() {
+    char cBuff[1];
+
+    s_iCurBaud = kIMUBaud;
+    fd = serial_open((unsigned char*)dev_path, s_iCurBaud);
+
+    if (fd < 0) {
+        std::cerr << "Can not open IMU serial" << std::endl;
+        return;
     }
-    std::cerr << "Can not find IMU sensor" << std::endl;
+
+    s_cDataUpdate = 0;
+    WitReadReg(AX, 3);
+    Delayms(200);
+
+    while(serial_read_data(fd, (unsigned char*)cBuff, 1)) {
+        WitSerialDataIn(cBuff[0]);
+    }
+
+    if (s_cDataUpdate != 0) {
+        std::cout << "IMU Connected at baud " << s_iCurBaud << std::endl;
+    } else {
+        std::cerr << "IMU not responding at baud " << s_iCurBaud << std::endl;
+    }
 }
 
 int IMUComponent::ConfigureSensorOutputs() {
@@ -233,6 +230,7 @@ Gamepad::Gamepad(const char* dev) : fd(-1), running(true) {
         return;
     }
     std::memset(axes, 0, sizeof(axes));
+    std::memset(buttons, 0, sizeof(buttons));
     read_thread = std::thread(&Gamepad::ReadLoop, this);
 }
 
@@ -250,6 +248,12 @@ float Gamepad::GetAxis(int axis) const {
     if (axis < 0 || axis >= JS_AXIS_LIMIT) return 0.0f;
     std::lock_guard<std::mutex> lock(data_mutex);
     return axes[axis];
+}
+
+bool Gamepad::GetButton(int button) const {
+    if (button < 0 || button >= JS_BUTTON_LIMIT) return false;
+    std::lock_guard<std::mutex> lock(data_mutex);
+    return buttons[button];
 }
 
 bool Gamepad::IsConnected() const {
@@ -275,8 +279,10 @@ void Gamepad::ReadLoop() {
                     axes[event.number] = (float)event.value / 32767.0f;
                 }
             } else if (event.type & JS_EVENT_BUTTON) {
-                std::cout << "[Gamepad] Button " << (int)event.number 
-                          << " State: " << (int)event.value << std::endl;
+                if (event.number < JS_BUTTON_LIMIT) {
+                    std::lock_guard<std::mutex> lock(data_mutex);
+                    buttons[event.number] = event.value;
+                }
             }
         }
         if (!any_read && fd >= 0) {
