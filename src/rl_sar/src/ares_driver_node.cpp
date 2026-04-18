@@ -226,7 +226,7 @@ private:
         {
             geometry_msgs::msg::Twist twist;
             twist.linear.x  = gamepad_->GetAxis(1) * gamepad_scale_;
-            twist.linear.y  = 0.0f;
+            twist.linear.y  = -gamepad_->GetAxis(0) * gamepad_scale_;
             twist.angular.z = gamepad_->GetAxis(3) * gamepad_scale_;
             xbox_vel_pub_->publish(twist);
         }

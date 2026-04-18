@@ -15,7 +15,7 @@ ares_himloco/himloco:
   decimation: 4
   num_of_dofs: 12
   action_scale: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]
-  commands_scale: [-4.0, 2.0, 0.25]
+  commands_scale: [-2.0, 2.0, -0.25]
   lin_vel_scale: 2.0
   ang_vel_scale: 0.25
   dof_pos_scale: 1.0
@@ -30,4 +30,4 @@ ares_himloco/himloco:
   default_dof_pos: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
   # Driver config
-  gamepad_scale: 0.5
+  gamepad_scale: 1.0
