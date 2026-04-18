@@ -77,6 +77,7 @@ public:
     struct JointState {
         std::array<float, NUM_JOINTS> position;  // rad, relative to zero offset
         std::array<float, NUM_JOINTS> velocity;  // rad/s
+        std::array<float, NUM_JOINTS> torque;    // Nm
     };
 
     struct IMUData {

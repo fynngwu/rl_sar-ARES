@@ -111,12 +111,34 @@ static int cmd_autoreport(const std::vector<int>& joints) {
 static int cmd_setzero(const std::vector<int>& joints) {
     MotorCtx ctx;
     ctx.init(joints);
+    auto all = ctx.bound_joints();
 
-    for (int j : ctx.bound_joints()) {
+    for (int j : all)
+        ctx.ctrl->EnableAutoReport(ctx.motor_idx[j]);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    bool any_offline = false;
+    for (int j : all) {
+        if (!ctx.ctrl->IsMotorOnline(ctx.motor_idx[j])) {
+            printf("WARNING: %-10s (motor ID %d) is OFFLINE\n", kJointNames[j], kMotorIds[j]);
+            any_offline = true;
+        }
+    }
+    if (any_offline) {
+        printf("ERROR: Not all motors online. Aborting SetZero.\n");
+        for (int j : all)
+            ctx.ctrl->DisableAutoReport(ctx.motor_idx[j]);
+        return 1;
+    }
+
+    for (int j : all) {
         ctx.ctrl->SetZero(ctx.motor_idx[j]);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         printf("SetZero sent to %-10s (motor ID %d)\n", kJointNames[j], kMotorIds[j]);
     }
+
+    for (int j : all)
+        ctx.ctrl->DisableAutoReport(ctx.motor_idx[j]);
     printf("Done.\n");
     return 0;
 }
@@ -246,6 +268,20 @@ static int cmd_errors(const std::vector<int>& joints, bool clear) {
     return 0;
 }
 
+static int cmd_disable(const std::vector<int>& joints) {
+    MotorCtx ctx;
+    ctx.init(joints);
+    auto all = ctx.bound_joints();
+
+    for (int j : all) {
+        ctx.ctrl->DisableMotor(ctx.motor_idx[j]);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        printf("Disabled %-10s (motor ID %d)\n", kJointNames[j], kMotorIds[j]);
+    }
+    printf("Done.\n");
+    return 0;
+}
+
 static void usage(const char* prog) {
     printf("Usage: %s <command> [options]\n\n", prog);
     printf("Commands:\n");
@@ -254,6 +290,7 @@ static void usage(const char* prog) {
     printf("  to_offset [-j N]     Enable motors + interpolate to offset positions\n");
     printf("  imu                  Read IMU gyro + projected gravity\n");
     printf("  errors [-j N] [-c]   Read motor error codes; -c to clear\n");
+    printf("  disable [-j N]       Disable motors (power off)\n");
     printf("\nOptions:\n");
     printf("  -j N   Joint index (0-11), can repeat. Omit for all joints.\n");
     printf("  -c     Clear errors (only for 'errors' command)\n");
@@ -301,6 +338,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "to_offset")  return cmd_to_offset(joints);
     if (cmd == "imu")        return cmd_imu();
     if (cmd == "errors")     return cmd_errors(joints, clear);
+    if (cmd == "disable")    return cmd_disable(joints);
 
     printf("Unknown command: %s\n", cmd.c_str());
     usage(argv[0]);

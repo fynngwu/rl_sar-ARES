@@ -88,6 +88,7 @@ DogDriver::JointState DogDriver::GetJointStates() const {
         }
         states.position[i] = joint_pos;
         states.velocity[i] = joint_vel;
+        states.torque[i] = kJointDirection[i] * ms.torque;
     }
     return states;
 }
