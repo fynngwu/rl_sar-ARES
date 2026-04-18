@@ -90,10 +90,18 @@ public:
                     config_key = "ares_himloco/himloco";
                 YAML::Node rc = config[config_key];
 
-                if (rc["fixed_kp"])
-                    for (const auto &v : rc["fixed_kp"]) config_kp_.push_back(v.as<float>());
-                if (rc["fixed_kd"])
-                    for (const auto &v : rc["fixed_kd"]) config_kd_.push_back(v.as<float>());
+                if (rc["fixed_kp"]) {
+                    if (rc["fixed_kp"].IsScalar())
+                        config_kp_.assign(12, rc["fixed_kp"].as<float>());
+                    else
+                        for (const auto &v : rc["fixed_kp"]) config_kp_.push_back(v.as<float>());
+                }
+                if (rc["fixed_kd"]) {
+                    if (rc["fixed_kd"].IsScalar())
+                        config_kd_.assign(12, rc["fixed_kd"].as<float>());
+                    else
+                        for (const auto &v : rc["fixed_kd"]) config_kd_.push_back(v.as<float>());
+                }
                 if (rc["torque_limits"])
                     for (const auto &v : rc["torque_limits"]) config_torque_.push_back(v.as<float>());
                 if (rc["gamepad_scale"])
@@ -166,13 +174,17 @@ public:
         RCLCPP_INFO(this->get_logger(), "ARES Driver Node started");
     }
 
+    void SetDampingMode() {
+        for (int i = 0; i < DogDriver::NUM_JOINTS; ++i)
+            driver_->SetMITParams(i, 0.0f, 10.0f);
+    }
+
     ~AresDriverNode()
     {
         running_ = false;
         if (worker_thread_.joinable())
             worker_thread_.join();
         if (driver_) {
-            driver_->DisableAll();
             driver_->ClearAllErrors();
         }
         RCLCPP_INFO(this->get_logger(), "ARES Driver Node stopped");
@@ -203,6 +215,7 @@ private:
             feedback_msg.name.push_back(kJointNames[i]);
             feedback_msg.position.push_back(joint_states.position[di]);
             feedback_msg.velocity.push_back(joint_states.velocity[di]);
+            feedback_msg.effort.push_back(joint_states.torque[di]);
         }
         motor_feedback_pub_->publish(feedback_msg);
 
@@ -224,9 +237,15 @@ private:
         // --- Gamepad ---
         if (gamepad_ && gamepad_->IsConnected())
         {
+            if (gamepad_->GetButton(7))
+                height_value_ = std::min(HEIGHT_MAX, height_value_ + HEIGHT_STEP);
+            if (gamepad_->GetButton(10))
+                height_value_ = std::max(HEIGHT_MIN, height_value_ - HEIGHT_STEP);
+
             geometry_msgs::msg::Twist twist;
             twist.linear.x  = gamepad_->GetAxis(1) * gamepad_scale_;
             twist.linear.y  = -gamepad_->GetAxis(0) * gamepad_scale_;
+            twist.linear.z  = height_value_;
             twist.angular.z = gamepad_->GetAxis(3) * gamepad_scale_;
             xbox_vel_pub_->publish(twist);
         }
@@ -332,6 +351,10 @@ private:
     std::vector<float> config_kd_;
     std::vector<float> config_torque_;
     float gamepad_scale_;
+    static constexpr float HEIGHT_MIN = -0.05f;
+    static constexpr float HEIGHT_MAX = 0.05f;
+    static constexpr float HEIGHT_STEP = 0.005f;
+    float height_value_ = 0.0f;
 };
 
 int main(int argc, char **argv)
@@ -340,6 +363,11 @@ int main(int argc, char **argv)
     RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node...");
 
     auto node = std::make_shared<AresDriverNode>();
+
+    rclcpp::on_shutdown([node]() {
+        RCLCPP_INFO(rclcpp::get_logger("main"), "Setting damping mode (kp=0, kd=10) on all joints...");
+        node->SetDampingMode();
+    });
 
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(node);
