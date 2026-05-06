@@ -90,12 +90,21 @@ public:
                     config_key = "ares_himloco/himloco";
                 YAML::Node rc = config[config_key];
 
-                if (rc["fixed_kp"])
-                    for (const auto &v : rc["fixed_kp"]) config_kp_.push_back(v.as<float>());
-                if (rc["fixed_kd"])
-                    for (const auto &v : rc["fixed_kd"]) config_kd_.push_back(v.as<float>());
-                if (rc["torque_limits"])
-                    for (const auto &v : rc["torque_limits"]) config_torque_.push_back(v.as<float>());
+                if (rc["fixed_kp"]) {
+                    if (rc["fixed_kp"].IsScalar())
+                        config_kp_.assign(DogDriver::NUM_JOINTS, rc["fixed_kp"].as<float>());
+                    else for (const auto &v : rc["fixed_kp"]) config_kp_.push_back(v.as<float>());
+                }
+                if (rc["fixed_kd"]) {
+                    if (rc["fixed_kd"].IsScalar())
+                        config_kd_.assign(DogDriver::NUM_JOINTS, rc["fixed_kd"].as<float>());
+                    else for (const auto &v : rc["fixed_kd"]) config_kd_.push_back(v.as<float>());
+                }
+                if (rc["torque_limits"]) {
+                    if (rc["torque_limits"].IsScalar())
+                        config_torque_.assign(DogDriver::NUM_JOINTS, rc["torque_limits"].as<float>());
+                    else for (const auto &v : rc["torque_limits"]) config_torque_.push_back(v.as<float>());
+                }
                 if (rc["gamepad_scale"])
                     gamepad_scale_ = rc["gamepad_scale"].as<float>();
 
@@ -132,7 +141,20 @@ public:
             driver_->SetMITParams(i, kp, kd);
             driver_->SetTorqueLimit(i, torque);
         }
-        RCLCPP_INFO(this->get_logger(), "MIT params set for all joints (kp from config, torque from config)");
+
+        std::string kp_str, kd_str, torque_str;
+        for (int i = 0; i < DogDriver::NUM_JOINTS; ++i) {
+            float kp = (i < (int)config_kp_.size()) ? config_kp_[i] : DogDriver::DEFAULT_KP;
+            float kd = (i < (int)config_kd_.size()) ? config_kd_[i] : DogDriver::DEFAULT_KD;
+            float torque = (i < (int)config_torque_.size()) ? config_torque_[i] : TORQUE_LIMIT;
+            if (i > 0) { kp_str += ", "; kd_str += ", "; torque_str += ", "; }
+            kp_str += std::to_string(kp);
+            kd_str += std::to_string(kd);
+            torque_str += std::to_string(torque);
+        }
+        RCLCPP_INFO(this->get_logger(), "MIT params: kp=[%s]", kp_str.c_str());
+        RCLCPP_INFO(this->get_logger(), "MIT params: kd=[%s]", kd_str.c_str());
+        RCLCPP_INFO(this->get_logger(), "Torque limits: [%s]", torque_str.c_str());
 
         // --- Publishers ---
         motor_feedback_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
@@ -171,11 +193,13 @@ public:
         running_ = false;
         if (worker_thread_.joinable())
             worker_thread_.join();
-        if (driver_) {
-            driver_->DisableAll();
-            driver_->ClearAllErrors();
-        }
-        RCLCPP_INFO(this->get_logger(), "ARES Driver Node stopped");
+
+        RCLCPP_INFO(this->get_logger(), "Entering damping mode...");
+        auto states = driver_->GetJointStates();
+        for (int i = 0; i < DogDriver::NUM_JOINTS; ++i)
+            driver_->SetMITParams(i, 0.0f, 10.0f);
+        driver_->SetAllJointPositions(states.position);
+        RCLCPP_INFO(this->get_logger(), "ARES Driver Node stopped (damping)");
     }
 
 private:
