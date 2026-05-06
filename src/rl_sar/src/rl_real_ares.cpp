@@ -19,11 +19,10 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 
-#include "rl_sdk.hpp"
+#include "observations_struct.hpp"
 #include "observation_buffer.hpp"
 #include "inference_runtime.hpp"
 #include "loop.hpp"
-#include "vector_math.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -182,18 +181,7 @@ private:
                     default_dof_pos_.push_back(p.as<float>());
             }
 
-            if (robot_config["fixed_kp"])
-            {
-                kp_.clear();
-                for (const auto &s : robot_config["fixed_kp"])
-                    kp_.push_back(s.as<float>());
-            }
-            if (robot_config["fixed_kd"])
-            {
-                kd_.clear();
-                for (const auto &s : robot_config["fixed_kd"])
-                    kd_.push_back(s.as<float>());
-            }
+
         }
         catch (const YAML::Exception &e)
         {
@@ -523,10 +511,7 @@ private:
             clip_actions_upper_.resize(num_of_dofs_, 1.0f);
         if (clip_actions_lower_.size() < static_cast<size_t>(num_of_dofs_))
             clip_actions_lower_.resize(num_of_dofs_, -1.0f);
-        if (kp_.size() < static_cast<size_t>(num_of_dofs_))
-            kp_.resize(num_of_dofs_, 40.0f);
-        if (kd_.size() < static_cast<size_t>(num_of_dofs_))
-            kd_.resize(num_of_dofs_, 0.5f);
+
     }
 
     void ComputeObsDims()
@@ -660,8 +645,7 @@ private:
     std::vector<float> default_dof_pos_;
     std::vector<float> clip_actions_upper_;
     std::vector<float> clip_actions_lower_;
-    std::vector<float> kp_;  // Loaded for logging only — NOT sent per-command
-    std::vector<float> kd_;  // Loaded for logging only — NOT sent per-command
+
     // Basic parameters
     int num_of_dofs_;
     float dt_;
