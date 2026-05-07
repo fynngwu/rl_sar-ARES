@@ -110,34 +110,7 @@ else()
     message(WARNING "ONNX Runtime not found. Please run: bash download_inference_runtime.sh onnx")
 endif()
 
-# LibTorch Setup
-set(USE_TORCH "OFF")
-set(TORCH_LIBRARIES "")
-set(LIBTORCH_DIR "${INFERENCE_RUNTIME_DIR}/libtorch")
-
-if(EXISTS "${LIBTORCH_DIR}/include" AND EXISTS "${LIBTORCH_DIR}/lib")
-    set(USE_TORCH "ON")
-    add_compile_definitions(USE_TORCH)
-
-    message(STATUS "Found LibTorch at: ${LIBTORCH_DIR}")
-
-    set(CMAKE_PREFIX_PATH "${LIBTORCH_DIR};${CMAKE_PREFIX_PATH}")
-    find_package(Torch QUIET)
-
-    if(Torch_FOUND)
-        message(STATUS "LibTorch version: ${Torch_VERSION}")
-        message(STATUS "Torch libraries: ${TORCH_LIBRARIES}")
-    else()
-        set(USE_TORCH "OFF")
-        message(WARNING "LibTorch found but find_package(Torch) failed")
-    endif()
-else()
-    message(WARNING "LibTorch not found. Please run: bash download_inference_runtime.sh libtorch")
-endif()
-
-find_package(TBB REQUIRED)
 find_package(Threads REQUIRED)
-find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 
 if(SYSTEM_TYPE STREQUAL "Linux")
     set(YAML_CPP_LIBRARIES yaml-cpp)
@@ -179,9 +152,6 @@ set(PREBUILT_LIB_PATHS "")
 if(DOG_DRIVER_LIB)
     list(APPEND PREBUILT_LIB_PATHS "${DRIVER_DIR}")
 endif()
-if(USE_TORCH)
-    list(APPEND PREBUILT_LIB_PATHS "${LIBTORCH_DIR}/lib")
-endif()
 if(USE_ONNX)
     list(APPEND PREBUILT_LIB_PATHS "${ONNX_RUNTIME_DIR}/lib")
 endif()
@@ -197,55 +167,19 @@ foreach(path ${PREBUILT_LIB_PATHS})
     message(STATUS "  - ${path}")
 endforeach()
 
-# Add Python library path to RPATH
-if(Python3_LIBRARIES)
-    get_filename_component(PYTHON_LIB_DIR "${Python3_LIBRARIES}" DIRECTORY)
-    list(APPEND CMAKE_INSTALL_RPATH "${PYTHON_LIB_DIR}")
-    message(STATUS "Added Python library path to RPATH: ${PYTHON_LIB_DIR}")
-endif()
-
 include_directories(
     include
-    library/core/matplotlibcpp
     library/core/observation_buffer
-    library/core/rl_sdk
     library/core/loop
-    library/core/fsm
-    library/core/vector_math
-    library/core/motion_loader
     library/core/inference_runtime
     library/core/logger
-    fsm_robot
 )
 
 # library for inference runtime
 add_library(inference_runtime library/core/inference_runtime/inference_runtime.cpp)
-if(USE_TORCH)
-    target_link_libraries(inference_runtime PUBLIC ${TORCH_LIBRARIES})
-    target_compile_definitions(inference_runtime PRIVATE USE_TORCH)
-endif()
 if(USE_ONNX)
     target_link_libraries(inference_runtime PUBLIC ${ONNX_RUNTIME_LIB})
     target_compile_definitions(inference_runtime PRIVATE USE_ONNX)
-endif()
-
-# library for motion loader
-add_library(motion_loader library/core/motion_loader/motion_loader.cpp)
-
-# library for rl sdk
-add_library(rl_sdk library/core/rl_sdk/rl_sdk.cpp)
-target_link_libraries(rl_sdk PUBLIC
-    motion_loader
-    inference_runtime
-    Python3::Python
-    Python3::Module
-    TBB::tbb
-)
-find_package(Python3 COMPONENTS NumPy)
-if(Python3_NumPy_FOUND)
-    target_link_libraries(rl_sdk PUBLIC Python3::NumPy)
-else()
-    target_compile_definitions(rl_sdk PUBLIC WITHOUT_NUMPY)
 endif()
 
 # library for observation buffer
@@ -288,15 +222,7 @@ message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Compiler: ${CMAKE_COMPILER_ID} ${CMAKE_COMPILER_VERSION}")
 message(STATUS "----------------------------------------")
 message(STATUS "Backend Configuration:")
-message(STATUS "USE_TORCH: ${USE_TORCH}")
 message(STATUS "USE_ONNX: ${USE_ONNX}")
-if(USE_TORCH)
-    if(Torch_VERSION)
-        message(STATUS "LibTorch version: ${Torch_VERSION}")
-    else()
-        message(STATUS "LibTorch: Available")
-    endif()
-endif()
 if(USE_ONNX)
     if(ONNX_RUNTIME_VERSION)
         message(STATUS "ONNX Runtime version: ${ONNX_RUNTIME_VERSION}")

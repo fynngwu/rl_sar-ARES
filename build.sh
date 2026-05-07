@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -30,14 +31,14 @@ if [ "$ACTION" = "full" ]; then
     echo ""
     echo "[1/2] Building driver..."
     cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
-    cmake --build driver/build -j$(nproc) 2>&1 | tail -3
+    cmake --build driver/build --target dog_driver -j$(nproc) 2>&1 | tail -3
     cp -u driver/build/libdog_driver.so driver/libdog_driver.so 2>/dev/null || true
 
     echo ""
     echo "[2/2] Building ROS2 nodes..."
     source_ros2
     cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
-    cmake --build src/rl_sar/build -j$(nproc) 2>&1 | tail -3
+    cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc) 2>&1 | tail -3
 
     install_bins
     echo "=== Done ==="
@@ -45,11 +46,11 @@ if [ "$ACTION" = "full" ]; then
 elif [ "$ACTION" = "make" ]; then
     echo "=== ARES Incremental Build ==="
 
-    cmake --build driver/build -j$(nproc) 2>&1 | tail -3
+    cmake --build driver/build --target dog_driver -j$(nproc) 2>&1 | tail -3
     cp -u driver/build/libdog_driver.so driver/libdog_driver.so 2>/dev/null || true
 
     source_ros2
-    cmake --build src/rl_sar/build -j$(nproc) 2>&1 | tail -3
+    cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc) 2>&1 | tail -3
 
     install_bins
     echo "=== Done ==="
