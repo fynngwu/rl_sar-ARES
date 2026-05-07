@@ -20,6 +20,8 @@ static constexpr float MAX_TORQUE = 17.0f;
 static constexpr float MAX_SPEED = 44.0f;
 static constexpr float DEFAULT_KP = 40.0f;
 static constexpr float DEFAULT_KD = 0.5f;
+static constexpr float DAMPING_KP = 0.0f;
+static constexpr float DAMPING_KD = 10.0f;
 
 static constexpr int kMotorIds[NUM_JOINTS] = {
     1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15
@@ -209,6 +211,19 @@ static int cmd_to_offset(const std::vector<int>& joints) {
     return 0;
 }
 
+static int cmd_damping(const std::vector<int>& joints) {
+    MotorCtx ctx;
+    ctx.init(joints);
+    MIT_params params{DAMPING_KP, DAMPING_KD, MAX_SPEED, MAX_TORQUE};
+    for (int j : ctx.bound_joints()) {
+        ctx.ctrl->SetMITParams(ctx.motor_idx[j], params);
+        ctx.ctrl->EnableMotor(ctx.motor_idx[j]);
+        ctx.ctrl->SendMITCommand(ctx.motor_idx[j], 0.0f);
+    }
+    printf("Damping command sent (kp=%.1f, kd=%.1f, pos=0).\n", DAMPING_KP, DAMPING_KD);
+    return 0;
+}
+
 static int cmd_imu() {
     auto imu = std::make_unique<IMUComponent>("/dev/ttyCH341USB0");
 
@@ -288,6 +303,7 @@ static void usage(const char* prog) {
     printf("  autoreport [-j N]    Enable auto-report, print motor pos in real-time\n");
     printf("  setzero [-j N]       Set current position as zero point\n");
     printf("  to_offset [-j N]     Enable motors + interpolate to offset positions\n");
+    printf("  damping [-j N]       Enter damping mode (kp=0, kd=10, pos=0)\n");
     printf("  imu                  Read IMU gyro + projected gravity\n");
     printf("  errors [-j N] [-c]   Read motor error codes; -c to clear\n");
     printf("  disable [-j N]       Disable motors (power off)\n");
@@ -336,6 +352,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "autoreport") return cmd_autoreport(joints);
     if (cmd == "setzero")    return cmd_setzero(joints);
     if (cmd == "to_offset")  return cmd_to_offset(joints);
+    if (cmd == "damping")    return cmd_damping(joints);
     if (cmd == "imu")        return cmd_imu();
     if (cmd == "errors")     return cmd_errors(joints, clear);
     if (cmd == "disable")    return cmd_disable(joints);
