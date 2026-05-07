@@ -199,14 +199,28 @@ if(SYSTEM_TYPE STREQUAL "Linux")
     )
 
 if(DOG_DRIVER_LIB)
-        add_executable(ares_driver_node src/ares_driver_node.cpp)
-        target_link_libraries(ares_driver_node
+        add_library(ares_driver_core STATIC src/ares_driver_core.cpp)
+        target_link_libraries(ares_driver_core
             dog_driver
             ${YAML_CPP_LIBRARIES}
             Threads::Threads
+        )
+
+        add_executable(ares_driver_node
+            src/ares_driver_node.cpp
+        )
+        target_link_libraries(ares_driver_node
+            ares_driver_core
             rclcpp::rclcpp
             sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
             geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
+        )
+        target_precompile_headers(ares_driver_node PRIVATE
+            <rclcpp/rclcpp.hpp>
+            <sensor_msgs/msg/joint_state.hpp>
+            <sensor_msgs/msg/imu.hpp>
+            <geometry_msgs/msg/twist.hpp>
+            <yaml-cpp/yaml.h>
         )
     endif()
 endif()
