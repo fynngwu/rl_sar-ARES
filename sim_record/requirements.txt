@@ -1,5 +1,0 @@
-mujoco
-onnxruntime
-numpy
-matplotlib
-pyyaml

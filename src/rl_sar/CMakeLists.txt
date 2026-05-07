@@ -264,7 +264,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
         geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
     )
 
-    if(DOG_DRIVER_LIB)
+if(DOG_DRIVER_LIB)
         add_executable(ares_driver_node src/ares_driver_node.cpp)
         target_link_libraries(ares_driver_node
             dog_driver
