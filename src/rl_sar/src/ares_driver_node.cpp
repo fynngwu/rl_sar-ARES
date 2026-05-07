@@ -81,9 +81,17 @@ public:
         for (int i = 0; i < DogDriver::NUM_JOINTS; ++i)
             driver_to_topic_[topic_to_driver_[i]] = i;
 
-        for (const auto &v : rc["fixed_kp"])      config_kp_.push_back(v.as<float>());
-        for (const auto &v : rc["fixed_kd"])      config_kd_.push_back(v.as<float>());
-        for (const auto &v : rc["torque_limits"]) config_torque_.push_back(v.as<float>());
+        auto load_float_array = [&](const YAML::Node &n) -> std::vector<float> {
+            if (n.IsSequence()) {
+                std::vector<float> v;
+                for (const auto &e : n) v.push_back(e.as<float>());
+                return v;
+            }
+            return std::vector<float>(DogDriver::NUM_JOINTS, n.as<float>());
+        };
+        config_kp_     = load_float_array(rc["fixed_kp"]);
+        config_kd_     = load_float_array(rc["fixed_kd"]);
+        config_torque_ = load_float_array(rc["torque_limits"]);
         gamepad_scale_ = rc["gamepad_scale"].as<float>();
 
         RCLCPP_INFO(this->get_logger(), "Config: %s", config_path.c_str());
