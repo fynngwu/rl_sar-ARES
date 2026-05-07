@@ -81,8 +81,8 @@ public:
         for (int i = 0; i < DogDriver::NUM_JOINTS; ++i)
             driver_to_topic_[topic_to_driver_[i]] = i;
 
-        for (const auto &v : rc["fixed_kp"])    config_kp_.push_back(v.as<float>());
-        for (const auto &v : rc["fixed_kd"])    config_kd_.push_back(v.as<float>());
+        for (const auto &v : rc["fixed_kp"])      config_kp_.push_back(v.as<float>());
+        for (const auto &v : rc["fixed_kd"])      config_kd_.push_back(v.as<float>());
         for (const auto &v : rc["torque_limits"]) config_torque_.push_back(v.as<float>());
         gamepad_scale_ = rc["gamepad_scale"].as<float>();
 
@@ -103,8 +103,7 @@ public:
             driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
             driver_->SetTorqueLimit(i, config_torque_[i]);
         }
-
-        // --- Publishers ---
+        RCLCPP_INFO(this->get_logger(), "ARES Driver Node started");
         motor_feedback_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/motor_feedback", 10);
         imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("/imu/data", 10);
         xbox_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/xbox_vel", 10);

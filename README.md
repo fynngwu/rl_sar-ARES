@@ -2,9 +2,24 @@
 
 RL policy inference for the ARES quadruped robot. Based on the [rl_sar](https://github.com/fan-ziqi/rl_sar) framework, adapted for ARES hardware (Robstride motors via CAN, WIT IMU via serial).
 
+## Quick Start
+
+```bash
+# 1. Download inference runtime (ONNX Runtime)
+./download_inference_runtime.sh
+
+# 2. Build
+./build.sh
+
+# 3. Run (launches both nodes)
+./run.sh
+```
+
+Ctrl+C to stop. On shutdown, motors enter **damping mode** (kp=0, kd=10) for safety.
+
 ## Architecture
 
-Two ROS2 Humble nodes communicating via standard ROS2 topics:
+Two ROS2 nodes communicating via standard ROS2 topics:
 
 ```
 ares_driver_node  ──/motor_feedback──>  ares_rl_node
@@ -61,8 +76,8 @@ Both nodes share this file. Key parameters:
 
 | Parameter | Description |
 |-----------|-------------|
-| `fixed_kp` / `fixed_kd` | PD gains (driver reads at init) |
-| `torque_limits` | Per-joint torque limit (Nm) |
+| `fixed_kp` / `fixed_kd` | PD gains, scalar or 12-element list |
+| `torque_limits` | Torque limit (Nm), scalar or 12-element list |
 | `gamepad_scale` | Gamepad axis scaling |
 | `commands_scale` | Velocity command scaling [vx, vy, vyaw] |
 | `action_scale` | Action output scaling |
@@ -70,43 +85,37 @@ Both nodes share this file. Key parameters:
 | `observations` | Observation order |
 | `observations_history` | History frame indices |
 
-Modify this file and restart nodes — no recompilation needed.
+`fixed_kp`, `fixed_kd`, `torque_limits` accept either a single value (applied to all 12 joints) or a list of 12 values. Modify this file and restart nodes — no recompilation needed.
 
 ## Building
 
 ### Prerequisites
 
-- ROS2 Humble (`source /opt/ros/humble/setup.bash`)
+- ROS2 (Humble or Jazzy, sourced in your shell)
 - C++17 compiler, CMake 3.10+, yaml-cpp, TBB
 - Python3 with NumPy development headers
-- ONNX Runtime (v1.17.1+) in `library/inference_runtime/onnxruntime/`
+- ONNX Runtime (via `download_inference_runtime.sh`)
 
-### One-click build
+### Download inference runtime
 
 ```bash
-./build.sh
+./download_inference_runtime.sh          # ONNX Runtime + LibTorch
+./download_inference_runtime.sh onnx     # ONNX Runtime only
+./download_inference_runtime.sh libtorch # LibTorch only
 ```
 
-This builds the driver library and all ROS2 nodes.
-
-### Manual build
+### Build
 
 ```bash
-# 1. Build driver library
-cmake -S driver -B driver/build
-cmake --build driver/build
-
-# 2. Build ROS2 nodes
-source /opt/ros/humble/setup.bash
-cmake -S src/rl_sar -B src/rl_sar/build
-cmake --build src/rl_sar/build
+./build.sh          # full: cmake configure + build
+./build.sh make     # incremental build only
 ```
 
-To rebuild after changes:
+Or manually:
+
 ```bash
-./build.sh                    # rebuilds everything
-cmake --build driver/build    # only driver
-cmake --build src/rl_sar/build # only nodes
+cmake -S driver -B driver/build && cmake --build driver/build
+cmake -S src/rl_sar -B src/rl_sar/build && cmake --build src/rl_sar/build
 ```
 
 ### Build Outputs
@@ -115,78 +124,49 @@ cmake --build src/rl_sar/build # only nodes
 |--------|-------------|
 | `src/rl_sar/build/bin/ares` | RL inference node |
 | `src/rl_sar/build/bin/ares_driver_node` | Hardware driver node |
-| `src/rl_sar/build/bin/test_onnx_smoke` | ONNX smoke test (no hardware) |
-| `src/rl_sar/build/bin/test_driver_feedback` | Motor feedback reader (needs hardware) |
 | `driver/libdog_driver.so` | CAN + IMU driver library |
 
 ## Running
 
 ```bash
-source /opt/ros/humble/setup.bash
-
-# Terminal 1: Driver node (requires hardware)
-./src/rl_sar/build/bin/ares_driver_node
-
-# Terminal 2: RL node
-./src/rl_sar/build/bin/ares
+./run.sh
 ```
 
-### Testing
+This launches both nodes in one terminal. Ctrl+C stops both and motors enter damping mode.
+
+Or run separately:
 
 ```bash
-# ONNX smoke test (no hardware)
-./src/rl_sar/build/bin/test_onnx_smoke
-
-# Driver feedback test (needs hardware + running driver)
-source /opt/ros/humble/setup.bash
-./src/rl_sar/build/bin/test_driver_feedback
+./src/rl_sar/build/bin/ares_driver_node   # Terminal 1
+./src/rl_sar/build/bin/ares                # Terminal 2
 ```
 
-### FSM Controls
+## Shutdown Behavior
 
-| Key | Gamepad | State Transition |
-|-----|---------|-----------------|
-| 0 | A | Passive → GetUp |
-| 1 | RB+DPadUp | GetUp → RLLocomotion |
-| 9 | B | GetUp/RLLocomotion → GetDown |
-| P | LB+X | Any → Passive |
+On Ctrl+C, `ares_driver_node` enters **damping mode**: sets kp=0, kd=10 for all joints and holds current position. This provides safe resistance to gravity without active position control.
 
 ## Directory Structure
 
 ```
 rl_sar-ARES/
-├── build.sh                          # One-click build script
+├── build.sh                          # Build script (full / incremental)
+├── run.sh                            # One-click run both nodes
+├── download_inference_runtime.sh     # Download ONNX Runtime / LibTorch
 ├── src/rl_sar/
-│   ├── CMakeLists.txt                # Pure cmake build (no colcon)
+│   ├── CMakeLists.txt
 │   ├── src/
 │   │   ├── rl_real_ares.cpp          # RL inference node
 │   │   └── ares_driver_node.cpp      # Hardware driver node
-│   ├── test/                         # Test binaries
-│   ├── fsm_robot/                    # FSM states
-│   ├── include/                      # rl_sdk, observation_buffer headers
-│   └── library/core/                 # inference_runtime, rl_sdk, observation_buffer, etc.
+│   ├── test/                         # Test sources
+│   └── library/core/                 # inference_runtime, observation_buffer, loop, etc.
 ├── driver/
-│   ├── CMakeLists.txt
 │   ├── include/dog_driver.hpp
-│   ├── src/                          # CAN, serial, IMU, motor control sources
+│   ├── src/                          # CAN, serial, IMU, motor control
 │   └── libdog_driver.so
 ├── policy/
 │   └── ares_himloco/
 │       └── himloco/
-│           ├── config.yaml           # Unified config (RL + driver params)
+│           ├── config.yaml           # Unified config
 │           └── policy.onnx
-└── library/inference_runtime/        # ONNX Runtime
+└── library/inference_runtime/        # Downloaded by download_inference_runtime.sh
 ```
-
-## Key Differences from UIKA
-
-| Parameter | UIKA | ARES |
-|-----------|------|------|
-| PD gains (kp, kd) | 30, 1 | 30, 1.0 |
-| History length | 6 | 6 |
-| Obs order | cmd, ang_vel, gravity, pos, vel, actions | cmd, ang_vel, gravity, pos, vel, actions |
-| Joint order | FL/FR/RL/RR | FL/RL/FR/RR (URDF) |
-| Commands scale | [1.2, 0.5, 0.5] | [-4.0, 2.0, 0.25] |
-| Knee gear ratio | N/A | 1.667 |
-| IMU | ROS2 topic | WIT sensor via serial |
-| Torque limits | [6, 6, 11.2] per leg | [17.0] all joints |

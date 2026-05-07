@@ -24,7 +24,7 @@ ares_himloco/himloco:
   # PD gains (driver reads these at init)
   fixed_kp: 30
   fixed_kd: 1.0
-  torque_limits: [17.0, 17.0, 17.0, 17.0, 17.0, 17.0, 17.0, 17.0, 17.0, 17.0, 17.0, 17.0]
+  torque_limits: 17.0
 
   # Pose
   default_dof_pos: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
