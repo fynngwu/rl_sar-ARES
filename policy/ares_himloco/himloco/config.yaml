@@ -31,3 +31,9 @@ ares_himloco/himloco:
 
   # Driver config
   gamepad_scale: 1.0
+
+  # Joint mapping: topic_to_driver[topic_idx] = driver_idx
+  # Topic order (URDF): FL RL FR RR, by leg
+  # Driver internal order: HipA(LF,LR,RF,RR) HipF(LF,LR,RF,RR) Knee(LF,LR,RF,RR)
+  # Change this when switching to a network with different joint ordering
+  topic_to_driver: [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]

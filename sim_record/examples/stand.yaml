@@ -1,4 +1,0 @@
-schedule:
-  - name: Stand
-    cmd: [0.0, 0.0, 0.0]
-    duration: 5.0
