@@ -142,13 +142,13 @@ public:
     void SetDampingMode() {
         for (int i = 0; i < DogDriver::NUM_JOINTS; ++i)
             driver_->SetMITParams(i, 0.0f, 10.0f);
+        driver_->SetAllJointPositions({});
     }
 
     ~AresDriverNode()
     {
         running_ = false;
         if (worker_thread_.joinable()) worker_thread_.join();
-        if (driver_) driver_->ClearAllErrors();
         RCLCPP_INFO(this->get_logger(), "ARES Driver Node stopped");
     }
 
