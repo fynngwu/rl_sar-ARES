@@ -255,7 +255,7 @@ add_library(observation_buffer library/core/observation_buffer/observation_buffe
 if(SYSTEM_TYPE STREQUAL "Linux")
     add_executable(ares src/rl_real_ares.cpp)
     target_link_libraries(ares
-        rl_sdk
+        inference_runtime
         observation_buffer
         ${YAML_CPP_LIBRARIES}
         Threads::Threads
