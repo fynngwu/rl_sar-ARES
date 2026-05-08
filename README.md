@@ -11,9 +11,18 @@ RL policy inference for the ARES quadruped robot. Based on the [rl_sar](https://
 # 2. Build
 ./build.sh
 
-# 3. Run (launches both nodes)
+# 3. Run (launches both nodes with default policy: dogv2_cts/cts)
 ./run.sh
+
+# Or specify a different policy:
+./run.sh ares_himloco/himloco
+
+# Or run nodes separately (useful for debugging):
+ares_driver_node dogv2_cts/cts   # terminal 1
+ares dogv2_cts/cts               # terminal 2
 ```
+
+Available policies are subdirectories under `policy/` (e.g. `dogv2_cts/cts`, `ares_himloco/himloco`). Each contains `config.yaml` + `policy.onnx`.
 
 Ctrl+C to stop. On shutdown, motors enter **damping mode** (kp=0, kd=10) for safety.
 

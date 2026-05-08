@@ -14,17 +14,20 @@
 #include <yaml-cpp/yaml.h>
 
 static constexpr std::array<std::pair<float, float>, AresDriverCore::NUM_JOINTS> kPositionLimits = {{
-    {-0.7853982f,  0.7853982f}, 
+    // HipA: LF, LR, RF, RR
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    // HipF: LF, LR, RF, RR
     {-1.2217658f,  0.8726683f},
-    {-1.2217299f,  0.6f},
-    {-0.7853982f,  0.7853982f},
     {-1.2217305f,  0.8726683f},
-    {-1.2217299f,  0.6f},
-    {-0.7853982f,  0.7853982f},
     {-0.8726999f,  1.2217342f},
-    {-0.6f,        1.2217287f},
-    {-0.7853982f,  0.7853982f},
     {-0.8726999f,  1.2217305f},
+    // Knee: LF, LR, RF, RR
+    {-1.2217299f,  0.6f},
+    {-1.2217299f,  0.6f},
+    {-0.6f,        1.2217287f},
     {-0.6f,        1.2217287f},
 }};
 
@@ -149,19 +152,19 @@ public:
         constexpr auto COMMAND_PERIOD = std::chrono::milliseconds(5);
 
         while (running_) {
-            std::array<float, NUM_JOINTS> clamped_target;
+            std::array<float, NUM_JOINTS> topic_target;
             {
                 std::lock_guard<std::mutex> lock(cmd_mutex_);
-                clamped_target = latest_target_;
+                topic_target = latest_target_;
             }
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                clamped_target[i] = std::clamp(clamped_target[i],
-                                               kPositionLimits[i].first,
-                                               kPositionLimits[i].second);
 
             std::array<float, NUM_JOINTS> driver_target;
             for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_target[i] = clamped_target[driver_to_topic_[i]];
+                driver_target[i] = topic_target[driver_to_topic_[i]];
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_target[i] = std::clamp(driver_target[i],
+                                               kPositionLimits[i].first,
+                                               kPositionLimits[i].second);
             driver_->SetAllJointPositions(driver_target);
 
             next_tick += COMMAND_PERIOD;
