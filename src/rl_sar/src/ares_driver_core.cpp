@@ -30,14 +30,14 @@ static constexpr std::array<std::pair<float, float>, AresDriverCore::NUM_JOINTS>
 
 class AresDriverCore::Impl {
 public:
-    explicit Impl(const std::string& policy_dir)
+    explicit Impl(const std::string& policy_dir, const std::string& policy_name)
         : running_(true),
           received_first_command_(false)
     {
-        std::string config_path = policy_dir + "/ares_himloco/himloco/config.yaml";
-        YAML::Node rc = YAML::LoadFile(config_path)["ares_himloco/himloco"];
+        std::string config_path = policy_dir + "/" + policy_name + "/config.yaml";
+        YAML::Node rc = YAML::LoadFile(config_path)[policy_name];
         if (!rc)
-            throw std::runtime_error("Missing 'ares_himloco/himloco' in " + config_path);
+            throw std::runtime_error("Missing '" + policy_name + "' in " + config_path);
 
         auto t2d = rc["topic_to_driver"];
         for (int i = 0; i < NUM_JOINTS; ++i)
@@ -193,8 +193,8 @@ public:
     float height_value_ = 0.0f;
 };
 
-AresDriverCore::AresDriverCore(const std::string& policy_dir)
-    : impl_(std::make_unique<Impl>(policy_dir))
+AresDriverCore::AresDriverCore(const std::string& policy_dir, const std::string& policy_name)
+    : impl_(std::make_unique<Impl>(policy_dir, policy_name))
 {
 }
 

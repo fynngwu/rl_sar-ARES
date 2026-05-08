@@ -1,0 +1,40 @@
+# DogV2 CTS — ARES deployment config (RL + driver parameters)
+# CTS policy joint order (= topic order): FL FR RL RR (per leg: hip, thigh, calf)
+# Driver internal order: HipA(LF,LR,RF,RR) HipF(LF,LR,RF,RR) Knee(LF,LR,RF,RR)
+dogv2_cts/cts:
+  # Model
+  model_name: "policy.onnx"
+  num_observations: 45
+  observations: ["ang_vel", "gravity_vec", "commands", "dof_pos", "dof_vel", "actions"]
+  observations_history: [4, 3, 2, 1, 0]
+  observations_history_priority: "time"
+  clip_obs: 100.0
+  clip_actions_lower: [-100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100]
+  clip_actions_upper: [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
+
+  # Control
+  dt: 0.005
+  decimation: 4
+  num_of_dofs: 12
+  action_scale: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]
+  commands_scale: [2.0, 2.0, 0.25]
+  lin_vel_scale: 2.0
+  ang_vel_scale: 0.25
+  dof_pos_scale: 1.0
+  dof_vel_scale: 0.05
+
+  # PD gains (driver reads these at init)
+  fixed_kp: 20
+  fixed_kd: 0.5
+  torque_limits: [17.0, 17.0, 25.0, 17.0, 17.0, 25.0, 17.0, 17.0, 25.0, 17.0, 17.0, 25.0]
+
+  # Pose
+  default_dof_pos: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+  # Driver config
+  gamepad_scale: 1.0
+
+  # Joint mapping: topic_to_driver[topic_idx] = driver_idx
+  # Topic order (CTS policy): FL FR RL RR, by leg
+  # Driver internal order: HipA(LF,LR,RF,RR) HipF(LF,LR,RF,RR) Knee(LF,LR,RF,RR)
+  topic_to_driver: [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]

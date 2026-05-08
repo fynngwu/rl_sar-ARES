@@ -28,9 +28,9 @@ static constexpr const char* kJointNames[AresDriverCore::NUM_JOINTS] = {
 class AresDriverNode : public rclcpp::Node
 {
 public:
-    AresDriverNode()
+    explicit AresDriverNode(const std::string& policy_name)
         : Node("ares_driver_node"),
-          core_(std::make_unique<AresDriverCore>(std::string(POLICY_DIR)))
+          core_(std::make_unique<AresDriverCore>(std::string(POLICY_DIR), policy_name))
     {
         RCLCPP_INFO(this->get_logger(), "Initializing ARES Driver Node...");
         RCLCPP_INFO(this->get_logger(), "  topic_to_driver: %s", FmtIntArr(core_->topic_to_driver()).c_str());
@@ -147,9 +147,10 @@ private:
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node...");
+    std::string policy_name = (argc > 1) ? argv[1] : "ares_himloco/himloco";
+    RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node (policy: %s)...", policy_name.c_str());
 
-    auto node = std::make_shared<AresDriverNode>();
+    auto node = std::make_shared<AresDriverNode>(policy_name);
 
     rclcpp::on_shutdown([node]() {
         RCLCPP_INFO(rclcpp::get_logger("main"), "Setting damping mode...");
