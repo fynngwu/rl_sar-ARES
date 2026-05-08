@@ -135,7 +135,7 @@ public:
 
         for (int i = 0; i < NUM_JOINTS; ++i)
             driver_->SetMITParams(i, 0.0f, 10.0f);
-        driver_->SetAllJointPositions({});
+        // driver_->SetAllJointPositions({});
     }
 
     void CommandLoop()

@@ -22,7 +22,7 @@ ares_himloco/himloco:
   dof_vel_scale: 0.05
 
   # PD gains (driver reads these at init)
-  fixed_kp: 30
+  fixed_kp: 20
   fixed_kd: 1.0
   torque_limits: 17.0
 
@@ -30,7 +30,7 @@ ares_himloco/himloco:
   default_dof_pos: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
   # Driver config
-  gamepad_scale: 1.0
+  gamepad_scale: 2.0
 
   # Joint mapping: topic_to_driver[topic_idx] = driver_idx
   # Topic order (URDF): FL RL FR RR, by leg
