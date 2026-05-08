@@ -28,7 +28,7 @@ public:
         float angular_z = 0.0f;
     };
 
-    explicit AresDriverCore(const std::string& policy_dir);
+    AresDriverCore(const std::string& policy_dir, const std::string& policy_name);
     ~AresDriverCore();
 
     AresDriverCore(const AresDriverCore&) = delete;

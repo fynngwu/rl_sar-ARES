@@ -45,7 +45,7 @@
 class ARSNode : public rclcpp::Node
 {
 public:
-    ARSNode()
+    explicit ARSNode(const std::string& policy_name)
         : Node("ares_rl_node"),
           num_of_dofs_(12),
           dt_(0.005f),
@@ -59,9 +59,10 @@ public:
           rl_init_done_(false),
           all_sensors_ready_(false),
           inference_count_(0),
-          inference_time_ms_(0.0)
+          inference_time_ms_(0.0),
+          policy_name_(policy_name)
     {
-        RCLCPP_INFO(this->get_logger(), "Initializing ARES RL Node...");
+        RCLCPP_INFO(this->get_logger(), "Initializing ARES RL Node (policy: %s)...", policy_name_.c_str());
 
         motor_command_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
             "/motor_command", 10);
@@ -110,7 +111,7 @@ private:
     bool InitRL()
     {
         std::string policy_dir = std::string(POLICY_DIR);
-        std::string config_path = policy_dir + "/ares_himloco/himloco/config.yaml";
+        std::string config_path = policy_dir + "/" + policy_name_ + "/config.yaml";
         std::string model_name_from_config;
 
         RCLCPP_INFO(this->get_logger(), "Loading config: %s", config_path.c_str());
@@ -118,7 +119,7 @@ private:
         try
         {
             YAML::Node config = YAML::LoadFile(config_path);
-            YAML::Node robot_config = config["ares_himloco/himloco"];
+            YAML::Node robot_config = config[policy_name_];
             #define GET_PARAM(key, var) \
                 if (robot_config[#key]) var = robot_config[#key].as<decltype(var)>();
 
@@ -194,11 +195,11 @@ private:
         std::string model_path;
         if (!model_name_from_config.empty())
         {
-            model_path = policy_dir + "/ares_himloco/himloco/" + model_name_from_config;
+            model_path = policy_dir + "/" + policy_name_ + "/" + model_name_from_config;
         }
         else
         {
-            std::string search_dir = policy_dir + "/ares_himloco/himloco/";
+            std::string search_dir = policy_dir + "/" + policy_name_ + "/";
             model_path = FindLatestOnnx(search_dir);
             if (model_path.empty())
             {
@@ -662,15 +663,17 @@ private:
     bool all_sensors_ready_;
     int inference_count_;
     double inference_time_ms_;
+    std::string policy_name_;
     std::optional<std::chrono::steady_clock::time_point> last_print_time_;
 };
 
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES RL Node...");
+    std::string policy_name = (argc > 1) ? argv[1] : "ares_himloco/himloco";
+    RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES RL Node (policy: %s)...", policy_name.c_str());
 
-    auto node = std::make_shared<ARSNode>();
+    auto node = std::make_shared<ARSNode>(policy_name);
 
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(node);
