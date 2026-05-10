@@ -33,6 +33,12 @@ static constexpr float kOffsets[NUM_JOINTS] = {
     1.76702f, 1.76702f, -1.76702f, -1.76702f
 };
 
+static constexpr float kJointDirection[NUM_JOINTS] = {
+    -1, -1, -1, -1, -1, -1, -1, -1, +1, +1, +1, +1
+};
+
+static constexpr float KNEE_GEAR_RATIO = 1.667f;
+
 static const char* kJointNames[NUM_JOINTS] = {
     "LF_HipA", "LR_HipA", "RF_HipA", "RR_HipA",
     "LF_HipF", "LR_HipF", "RF_HipF", "RR_HipF",
@@ -93,13 +99,18 @@ static int cmd_autoreport(const std::vector<int>& joints) {
     printf("Auto-report enabled. Press Ctrl-C to stop.\n");
     while (g_running) {
         printf("\033[2J\033[H");
-        printf("%-10s %10s %10s %10s %7s\n", "Joint", "Pos(rad)", "Vel(rad/s)", "Torque(Nm)", "Online");
-        printf("-----------------------------------------------------------\n");
+        printf("%-10s %10s %10s %10s %10s %10s %7s\n",
+               "Joint", "MotorPos", "JointPos", "JointVel", "JointTrq", "MotorRaw", "Online");
+        printf("-----------------------------------------------------------------------------------\n");
         for (int j : all) {
             auto st = ctx.ctrl->GetMotorState(ctx.motor_idx[j]);
             bool on = ctx.ctrl->IsMotorOnline(ctx.motor_idx[j]);
-            printf("%-10s %10.4f %10.4f %10.4f %7s\n",
-                   kJointNames[j], st.position, st.velocity, st.torque,
+            float jpos = kJointDirection[j] * (st.position - kOffsets[j]);
+            float jvel = kJointDirection[j] * st.velocity;
+            float jtau = kJointDirection[j] * st.torque;
+            if (j >= 8) { jpos /= KNEE_GEAR_RATIO; jvel /= KNEE_GEAR_RATIO; }
+            printf("%-10s %10.4f %10.4f %10.4f %10.4f %10.4f %7s\n",
+                   kJointNames[j], st.position, jpos, jvel, jtau, st.torque,
                    on ? "YES" : "NO");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
