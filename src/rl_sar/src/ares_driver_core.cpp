@@ -25,10 +25,10 @@ static constexpr std::array<std::pair<float, float>, AresDriverCore::NUM_JOINTS>
     {-0.8726999f,  1.2217342f},
     {-0.8726999f,  1.2217305f},
     // Knee: LF, LR, RF, RR
-    {-1.2217299f,  0.6f},
-    {-1.2217299f,  0.6f},
-    {-0.6f,        1.2217287f},
-    {-0.6f,        1.2217287f},
+    {-1.0217299f,  0.8f},
+    {-1.0217299f,  0.8f},
+    {-0.8f,        1.0217287f},
+    {-0.8f,        1.0217287f},
 }};
 
 class AresDriverCore::Impl {
