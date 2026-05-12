@@ -191,6 +191,11 @@ int DogDriver::SetMITParams(int joint_idx, float kp, float kd) {
     MIT_params params;
     params.kp = kp;
     params.kd = kd;
+    if (joint_idx >= 8) {
+        const float knee_scale = KNEE_GEAR_RATIO * KNEE_GEAR_RATIO;
+        params.kp /= knee_scale;
+        params.kd /= knee_scale;
+    }
     params.vel_limit = MAX_SPEED;
     params.torque_limit = MAX_TORQUE;
     return motor_controller_->SetMITParams(motor_indices_[joint_idx], params);
