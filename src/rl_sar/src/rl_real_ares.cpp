@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -104,6 +105,8 @@ public:
             loop_control_->shutdown();
         if (loop_rl_)
             loop_rl_->shutdown();
+        if (csv_file_.is_open())
+            csv_file_.close();
         RCLCPP_INFO(this->get_logger(), "ARES RL Node stopped");
     }
 
@@ -180,6 +183,31 @@ private:
                 default_dof_pos_.clear();
                 for (const auto &p : robot_config["default_dof_pos"])
                     default_dof_pos_.push_back(p.as<float>());
+            }
+
+            // Build driver_to_topic_ from topic_to_driver (same as ares_driver_core.cpp)
+            if (robot_config["topic_to_driver"]) {
+                auto t2d = robot_config["topic_to_driver"];
+                std::array<int, 12> topic_to_driver{};
+                for (int i = 0; i < 12; ++i)
+                    topic_to_driver[i] = t2d[i].as<int>();
+                for (int i = 0; i < 12; ++i)
+                    driver_to_topic_[topic_to_driver[i]] = i;
+            }
+
+            if (robot_config["record"] && robot_config["record"]["enabled"]) {
+                std::string filepath = robot_config["record"]["filepath"].as<std::string>();
+                csv_file_.open(filepath, std::ios::out | std::ios::trunc);
+                if (csv_file_.is_open()) {
+                    record_enabled_ = true;
+                    csv_file_ << "timestamp";
+                    for (int i = 0; i < 12; ++i)
+                        csv_file_ << "," << kJointNames[i] << "_pos"
+                                  << "," << kJointNames[i] << "_vel"
+                                  << "," << kJointNames[i] << "_torque"
+                                  << "," << kJointNames[i] << "_target";
+                    csv_file_ << "\n";
+                }
             }
 
 
@@ -275,22 +303,39 @@ private:
         std::vector<float> output_dof_pos = ComputeTargetPositions(actions);
 
         inference_count_++;
+
+        if (record_enabled_) {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            csv_file_ << record_time_;
+            for (int i = 0; i < num_of_dofs_; ++i)
+                csv_file_ << "," << obs_.dof_pos[i]
+                          << "," << obs_.dof_vel[i]
+                          << "," << joint_torque_[i]
+                          << "," << output_dof_pos[i];
+            csv_file_ << "\n";
+            record_time_ += dt_ * decimation_;
+        }
+
         // Print every 1 second
         auto now = std::chrono::steady_clock::now();
         if (!last_print_time_.has_value() ||
             std::chrono::duration<float>(now - last_print_time_.value()).count() >= 1.0f)
         {
             last_print_time_ = now;
-            RCLCPP_INFO(this->get_logger(),
-                        "[Infer #%d] cmd=%s ang_vel=%s gravity=%s dof_pos=%s dof_vel=%s action=%s target=%s",
-                        inference_count_,
-                        FormatVector(obs_.commands).c_str(),
-                        FormatVector(obs_.ang_vel).c_str(),
-                        FormatVector(obs_.gravity_vec).c_str(),
-                        FormatVector(obs_.dof_pos).c_str(),
-                        FormatVector(obs_.dof_vel).c_str(),
-                        FormatVector(actions).c_str(),
-                        FormatVector(output_dof_pos).c_str());
+            printf("\033[2J\033[H");
+            printf("Joint          DofPos       DofVel       DofTrq       Target\n");
+            printf("-------------------------------------------------------------------\n");
+            for (int i = 0; i < num_of_dofs_; ++i)
+            {
+                int t = driver_to_topic_[i];
+                printf("%-12s %10.4f %10.4f %10.4f %10.4f\n",
+                       kJointNames[i],
+                       obs_.dof_pos[t],
+                       obs_.dof_vel[t],
+                       joint_torque_[t],
+                       output_dof_pos[t]);
+            }
+            fflush(stdout);
         }
 
         {
@@ -454,6 +499,7 @@ private:
         {
             joint_pos_[i] = msg->position[i];
             joint_vel_[i] = msg->velocity[i];
+            joint_torque_[i] = msg->effort[i];
         }
 
         motor_feedback_received_ = true;
@@ -620,11 +666,23 @@ private:
     // Sensor data buffers
     std::array<float, 12> joint_pos_{};
     std::array<float, 12> joint_vel_{};
+    std::array<float, 12> joint_torque_{};
+    std::array<int, 12> driver_to_topic_{};
     std::array<float, 3> commands_buffer_{};
     std::array<float, 3> imu_gyro_{};        // angular velocity (body frame, rad/s)
     std::array<float, 3> imu_gravity_{};     // projected gravity (body frame, unit vector)
     bool motor_feedback_received_{false};
     bool imu_received_{false};
+    bool record_enabled_{false};
+    std::ofstream csv_file_;
+    double record_time_{0.0};
+
+    // Joint names (driver order: FL RL FR RR, per leg HipA HipF Knee)
+    static constexpr const char* kJointNames[12] = {
+        "FL_HipA", "RL_HipA", "FR_HipA", "RR_HipA",
+        "FL_HipF", "RL_HipF", "FR_HipF", "RR_HipF",
+        "FL_Knee", "RL_Knee", "FR_Knee", "RR_Knee"
+    };
 
     // Output queue
     std::queue<std::vector<float>> output_dof_pos_queue_;

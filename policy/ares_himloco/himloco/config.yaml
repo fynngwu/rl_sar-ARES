@@ -37,3 +37,8 @@ ares_himloco/himloco:
   # Driver internal order: HipA(LF,LR,RF,RR) HipF(LF,LR,RF,RR) Knee(LF,LR,RF,RR)
   # Change this when switching to a network with different joint ordering
   topic_to_driver: [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]
+
+  # Recording (50Hz, same data as terminal print)
+  record:
+    enabled: false
+    filepath: "/tmp/ares_record.csv"
