@@ -12,6 +12,12 @@
  *   - /motor_feedback and /motor_command use FL RL FR RR ordering (URDF order)
  *   - ares_driver_node handles reordering to/from driver internal order
  *   - 6-frame observation history
+ *
+ * Runtime policy switching via keyboard:
+ *   [0] STOP     — hold current position, no commands sent
+ *   [1] himloco  — reload ares_himloco/himloco (yaml + ONNX + driver params)
+ *   [2] cts      — reload dogv2_cts/cts
+ *   On switch: publishes new kp/kd to driver via /motor_param_update topic.
  */
 
 #include "rclcpp/rclcpp.hpp"
@@ -28,20 +34,77 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <queue>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
 
+// --- Runtime policy registry -------------------------------------------------
+// Key -> policy_name (used as ROS argv[1] default and config subdirectory)
+static const std::map<char, std::string> kPolicyMap = {
+    {'1', "ares_himloco/himloco"},
+    {'2', "dogv2_cts/cts"}
+};
+
+// --- Terminal raw-mode helpers (shared between driver-core and RL node) -------
+static bool g_rl_terminal_raw = false;
+static struct termios g_rl_original_termios;
+
+static void rl_restore_terminal()
+{
+    if (g_rl_terminal_raw) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_rl_original_termios);
+        g_rl_terminal_raw = false;
+    }
+}
+
+static int rl_kbhit()
+{
+    if (!isatty(STDIN_FILENO))
+        return -1;
+    if (!g_rl_terminal_raw) {
+        tcgetattr(STDIN_FILENO, &g_rl_original_termios);
+        struct termios raw = g_rl_original_termios;
+        raw.c_lflag &= ~(ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+        g_rl_terminal_raw = true;
+        atexit(rl_restore_terminal);
+    }
+    char c;
+    if (read(STDIN_FILENO, &c, 1) == 1)
+        return static_cast<unsigned char>(c);
+    return -1;
+}
+
+// --- RL node states ----------------------------------------------------------
+enum class RLNodeState {
+    STOPPED,
+    RUNNING
+};
+
+static const char* state_name(RLNodeState s)
+{
+    switch (s) {
+    case RLNodeState::STOPPED:  return "STOPPED";
+    case RLNodeState::RUNNING:  return "RUNNING";
+    }
+    return "???";
+}
 
 class ARSNode : public rclcpp::Node
 {
@@ -67,6 +130,9 @@ public:
 
         motor_command_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
             "/motor_command", 10);
+
+        motor_param_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
+            "/motor_param_update", 1);
 
         motor_feedback_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
             "/motor_feedback", 10,
@@ -94,23 +160,43 @@ public:
         loop_control_->start();
         loop_rl_->start();
 
+        // Start keyboard listener in a background thread
+        StartKeyboardListener();
+
         RCLCPP_INFO(this->get_logger(), "ARES RL Node started");
         RCLCPP_INFO(this->get_logger(), "  Control: %.1fHz, Inference: %.1fHz",
                     1.0 / dt_, 1.0 / (dt_ * decimation_));
+        printf("\n=== ARES RL Controls ===\n");
+        printf("  [0] STOP     — hold current pose, no commands\n");
+        printf("  [1] himloco  — reload ares_himloco/himloco policy\n");
+        printf("  [2] cts      — reload dogv2_cts/cts policy\n");
+        printf("========================\n\n");
     }
 
     ~ARSNode()
     {
+        // Signal keyboard thread to exit
+        rl_running_ = false;
+
         if (loop_control_)
             loop_control_->shutdown();
         if (loop_rl_)
             loop_rl_->shutdown();
+
+        if (keyboard_thread_.joinable())
+            keyboard_thread_.join();
+
         if (csv_file_.is_open())
             csv_file_.close();
+
+        rl_restore_terminal();
         RCLCPP_INFO(this->get_logger(), "ARES RL Node stopped");
     }
 
 private:
+    // ==========================================================================
+    // Initialization
+    // ==========================================================================
     bool InitRL()
     {
         std::string policy_dir = std::string(POLICY_DIR);
@@ -195,7 +281,25 @@ private:
                     driver_to_topic_[topic_to_driver[i]] = i;
             }
 
+            // -------- Load motor params for driver updates ----------
+            auto load_float_array = [&](const YAML::Node& n) -> std::vector<float> {
+                if (n.IsSequence()) {
+                    std::vector<float> v;
+                    for (const auto& e : n)
+                        v.push_back(e.as<float>());
+                    return v;
+                }
+                return std::vector<float>(num_of_dofs_, n.as<float>());
+            };
+
+            current_kp_ = load_float_array(robot_config["fixed_kp"]);
+            current_kd_ = load_float_array(robot_config["fixed_kd"]);
+            current_torque_limits_ = load_float_array(robot_config["torque_limits"]);
+
+            // Recording
             if (robot_config["record"] && robot_config["record"]["enabled"]) {
+                if (csv_file_.is_open())
+                    csv_file_.close();
                 std::string filepath = robot_config["record"]["filepath"].as<std::string>();
                 csv_file_.open(filepath, std::ios::out | std::ios::trunc);
                 if (csv_file_.is_open()) {
@@ -208,9 +312,9 @@ private:
                                   << "," << kJointNames[i] << "_target";
                     csv_file_ << "\n";
                 }
+            } else {
+                record_enabled_ = false;
             }
-
-
         }
         catch (const YAML::Exception &e)
         {
@@ -266,20 +370,37 @@ private:
         obs_.dof_vel.resize(num_of_dofs_, 0.0f);
         obs_.actions.resize(num_of_dofs_, 0.0f);
         last_action_.assign(num_of_dofs_, 0.0f);
+        record_time_ = 0.0;
 
         RCLCPP_INFO(this->get_logger(), "default_dof_pos: %s", FormatVector(default_dof_pos_).c_str());
         RCLCPP_INFO(this->get_logger(), "action_scale: %s", FormatVector(action_scale_).c_str());
         RCLCPP_INFO(this->get_logger(), "commands_scale: %s", FormatVector(commands_scale_).c_str());
         RCLCPP_INFO(this->get_logger(), "observations: %s", FormatStringVector(observations_).c_str());
         RCLCPP_INFO(this->get_logger(), "observations_history length: %d", history_length);
+        RCLCPP_INFO(this->get_logger(), "kp: %s", FormatVector(current_kp_).c_str());
+        RCLCPP_INFO(this->get_logger(), "kd: %s", FormatVector(current_kd_).c_str());
 
         rl_init_done_ = true;
         return true;
     }
 
+    // ==========================================================================
+    // Inference
+    // ==========================================================================
     void RunModel()
     {
         if (!rl_init_done_)
+            return;
+
+        // Check for pending state change (keyboard request)
+        if (state_change_pending_.load()) {
+            HandleStateChange();
+        }
+
+        if (current_state_ == RLNodeState::STOPPED)
+            return;
+
+        if (rl_paused_.load())
             return;
 
         {
@@ -323,6 +444,13 @@ private:
         {
             last_print_time_ = now;
             printf("\033[2J\033[H");
+            printf("State: %-8s | Policy: %-24s | Inf: %6.2fms | #%d\n",
+                   state_name(current_state_),
+                   policy_name_.c_str(),
+                   inference_time_ms_,
+                   inference_count_);
+            printf("[0]=Stop  [1]=himloco  [2]=cts\n");
+            printf("-------------------------------------------------------------------\n");
             printf("Joint          DofPos       DofVel       DofTrq       Target\n");
             printf("-------------------------------------------------------------------\n");
             for (int i = 0; i < num_of_dofs_; ++i)
@@ -348,6 +476,12 @@ private:
     void RobotControl()
     {
         if (!rl_init_done_ || !all_sensors_ready_)
+            return;
+
+        if (current_state_ == RLNodeState::STOPPED)
+            return;
+
+        if (control_paused_.load())
             return;
 
         std::vector<float> output_dof_pos;
@@ -391,15 +525,20 @@ private:
             fallback_action = last_action_;
         }
 
-        if (!observations_history_.empty())
+        // Guard model access so it can be swapped safely during reinit
         {
-            history_obs_buf_.insert(clamped_obs);
-            history_obs_ = history_obs_buf_.get_obs_vec(observations_history_);
-            actions = model_->forward({history_obs_});
-        }
-        else
-        {
-            actions = model_->forward({clamped_obs});
+            std::lock_guard<std::mutex> lock(model_mutex_);
+
+            if (!observations_history_.empty())
+            {
+                history_obs_buf_.insert(clamped_obs);
+                history_obs_ = history_obs_buf_.get_obs_vec(observations_history_);
+                actions = model_->forward({history_obs_});
+            }
+            else
+            {
+                actions = model_->forward({clamped_obs});
+            }
         }
 
         auto inference_end = std::chrono::high_resolution_clock::now();
@@ -435,6 +574,110 @@ private:
         return actions;
     }
 
+    // ==========================================================================
+    // Keyboard handling and state transitions
+    // ==========================================================================
+    void StartKeyboardListener()
+    {
+        rl_running_ = true;
+        keyboard_thread_ = std::thread([this]() { KeyboardLoop(); });
+    }
+
+    void KeyboardLoop()
+    {
+        while (rl_running_.load()) {
+            int key = rl_kbhit();
+            if (key > 0) {
+                if (key == '0') {
+                    pending_state_ = RLNodeState::STOPPED;
+                    state_change_pending_ = true;
+                } else if (key == '1' || key == '2') {
+                    auto it = kPolicyMap.find(static_cast<char>(key));
+                    if (it != kPolicyMap.end()) {
+                        requested_policy_ = it->second;
+                        pending_state_ = RLNodeState::RUNNING;
+                        state_change_pending_ = true;
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+
+    void HandleStateChange()
+    {
+        state_change_pending_ = false;
+        RLNodeState target = pending_state_.load();
+
+        if (target == RLNodeState::STOPPED) {
+            // Publish default_dof_pos as a final hold command, then stop
+            sensor_msgs::msg::JointState cmd_msg;
+            cmd_msg.header.stamp = this->now();
+            for (int i = 0; i < num_of_dofs_; ++i)
+                cmd_msg.position.push_back(default_dof_pos_[i]);
+            motor_command_pub_->publish(cmd_msg);
+
+            current_state_ = RLNodeState::STOPPED;
+            printf("[RL] → STOPPED (holding position)\n");
+            return;
+        }
+
+        if (target == RLNodeState::RUNNING && !requested_policy_.empty()) {
+            printf("[RL] Switching to policy: %s ...\n", requested_policy_.c_str());
+
+            // Pause loops so they don't access state during reinit
+            control_paused_ = true;
+            rl_paused_ = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+            // Lock model to ensure no in-flight inference
+            std::lock_guard<std::mutex> lock(model_mutex_);
+
+            // Reset sensor-ready flags — will re-arm once new callbacks arrive
+            rl_init_done_ = false;
+            all_sensors_ready_ = false;
+            motor_feedback_received_ = false;
+            imu_received_ = false;
+            inference_count_ = 0;
+
+            policy_name_ = requested_policy_;
+            if (!InitRL()) {
+                RCLCPP_ERROR(this->get_logger(), "Reinit failed for policy: %s", policy_name_.c_str());
+                current_state_ = RLNodeState::STOPPED;
+                control_paused_ = false;
+                rl_paused_ = false;
+                printf("[RL] Reinit FAILED → STOPPED\n");
+                return;
+            }
+
+            // Publish new kp/kd/torque to the driver node
+            PublishMotorParams(current_kp_, current_kd_, current_torque_limits_);
+
+            current_state_ = RLNodeState::RUNNING;
+            control_paused_ = false;
+            rl_paused_ = false;
+            printf("[RL] → RUNNING (policy: %s)\n", policy_name_.c_str());
+        }
+    }
+
+    void PublishMotorParams(const std::vector<float>& kp,
+                             const std::vector<float>& kd,
+                             const std::vector<float>& torque)
+    {
+        sensor_msgs::msg::JointState msg;
+        msg.header.stamp = this->now();
+        for (int i = 0; i < num_of_dofs_; ++i) {
+            msg.position.push_back(i < (int)kp.size()    ? kp[i]    : 20.0f);
+            msg.velocity.push_back(i < (int)kd.size()    ? kd[i]    : 1.0f);
+            msg.effort.push_back(i < (int)torque.size()  ? torque[i] : 17.0f);
+        }
+        motor_param_pub_->publish(msg);
+        RCLCPP_INFO(this->get_logger(), "Published motor params to /motor_param_update");
+    }
+
+    // ==========================================================================
+    // Observation computation
+    // ==========================================================================
     std::vector<float> ComputeObservation(const Observations<float> &obs_snapshot)
     {
         std::vector<float> obs_vec;
@@ -490,6 +733,9 @@ private:
         return obs_vec;
     }
 
+    // ==========================================================================
+    // ROS2 callbacks
+    // ==========================================================================
     void MotorFeedbackCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
@@ -535,6 +781,9 @@ private:
         commands_buffer_[2] = msg->angular.z;
     }
 
+    // ==========================================================================
+    // Helpers
+    // ==========================================================================
     std::vector<float> ComputeTargetPositions(const std::vector<float> &actions) const
     {
         std::vector<float> output_dof_pos(num_of_dofs_, 0.0f);
@@ -558,7 +807,6 @@ private:
             clip_actions_upper_.resize(num_of_dofs_, 1.0f);
         if (clip_actions_lower_.size() < static_cast<size_t>(num_of_dofs_))
             clip_actions_lower_.resize(num_of_dofs_, -1.0f);
-
     }
 
     void ComputeObsDims()
@@ -649,8 +897,11 @@ private:
         return oss.str();
     }
 
+    // ==========================================================================
     // ROS2 communication
+    // ==========================================================================
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_command_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_param_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_sub_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_sub_;
@@ -723,6 +974,29 @@ private:
     double inference_time_ms_;
     std::string policy_name_;
     std::optional<std::chrono::steady_clock::time_point> last_print_time_;
+
+    // ========================================================================
+    // Runtime switching state
+    // ========================================================================
+    // State machine
+    RLNodeState current_state_{RLNodeState::RUNNING};
+    std::atomic<RLNodeState> pending_state_{RLNodeState::RUNNING};
+    std::atomic<bool> state_change_pending_{false};
+    std::string requested_policy_;
+
+    // Pause mechanism (atomic flags checked in control/inference loops)
+    std::atomic<bool> control_paused_{false};
+    std::atomic<bool> rl_paused_{false};
+    std::mutex model_mutex_;                 // guards model_ during forward/reinit
+
+    // Stored motor params (read from yaml, published to driver on switch)
+    std::vector<float> current_kp_;
+    std::vector<float> current_kd_;
+    std::vector<float> current_torque_limits_;
+
+    // Keyboard listener thread
+    std::thread keyboard_thread_;
+    std::atomic<bool> rl_running_{true};
 };
 
 int main(int argc, char **argv)
