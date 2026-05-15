@@ -187,7 +187,7 @@ add_library(observation_buffer library/core/observation_buffer/observation_buffe
 
 # executable for ARES RL inference node (ROS2 topic interface)
 if(SYSTEM_TYPE STREQUAL "Linux")
-    add_executable(ares src/rl_real_ares.cpp)
+    add_executable(ares src/rl_real_ares.cpp src/keyboard_helper.cpp)
     target_link_libraries(ares
         inference_runtime
         observation_buffer
@@ -199,7 +199,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
     )
 
 if(DOG_DRIVER_LIB)
-        add_library(ares_driver_core STATIC src/ares_driver_core.cpp)
+        add_library(ares_driver_core STATIC src/ares_driver_core.cpp src/keyboard_helper.cpp)
         target_link_libraries(ares_driver_core
             dog_driver
             ${YAML_CPP_LIBRARIES}

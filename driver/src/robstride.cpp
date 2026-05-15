@@ -105,8 +105,18 @@ RobstrideController::RobstrideController() : running(false) {
                 for (size_t i = 0; i < motor_data.size(); ++i) {
                     auto& motor = motor_data[i];
                     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - motor.last_online_time).count();
-                    if (duration > 500) {
+                    bool was_online = motor.online;
+                    if (duration > 100) {
                         motor.online = false;
+                        if (was_online) {
+                            std::cout << "[Robstride] Motor " << motor.motor_id << " offline" << std::endl;
+                        }
+                        EnableMotor(i);
+                    } else {
+                        if (!was_online) {
+                            std::cout << "[Robstride] Motor " << motor.motor_id << " online (recovered)" << std::endl;
+                        }
+                        motor.online = true;
                     }
                 }
             }
