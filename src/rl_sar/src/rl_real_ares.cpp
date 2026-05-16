@@ -288,6 +288,7 @@ private:
         Lock lk(data_mutex_);
         size_t n = std::min(msg->position.size(), static_cast<size_t>(num_of_dofs_));
         for (size_t i=0;i<n;++i) { joint_pos_[i]=msg->position[i]; joint_vel_[i]=msg->velocity[i]; joint_torque_[i]=msg->effort[i]; }
+        motor_feedback_received_ = true;
         if (!all_sensors_ready_ && imu_received_) all_sensors_ready_ = true;
     }
 
@@ -377,7 +378,7 @@ private:
     std::array<float,12> joint_pos_{}, joint_vel_{}, joint_torque_{};
     std::array<int,12> driver_to_topic_{};
     std::array<float,3> commands_buffer_{}, imu_gyro_{}, imu_gravity_{};
-    bool imu_received_{false}, record_enabled_{false};
+    bool imu_received_{false}, motor_feedback_received_{false}, record_enabled_{false};
     std::ofstream csv_file_;
     double record_time_{0.0};
 

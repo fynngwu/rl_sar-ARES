@@ -8,12 +8,6 @@
 static bool g_terminal_raw = false;
 static struct termios g_original_termios;
 
-static void restore_terminal()
-{
-    if (g_terminal_raw)
-        tcsetattr(STDIN_FILENO, TCSANOW, &g_original_termios);
-}
-
 void restore_terminal()
 {
     if (g_terminal_raw) {
