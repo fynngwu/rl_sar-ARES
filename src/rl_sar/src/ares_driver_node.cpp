@@ -66,11 +66,6 @@ public:
         core_->PrintModeHelp();
     }
 
-    void SetDampingMode()
-    {
-        core_->SetDampingMode();
-    }
-
 private:
     std::string FmtIntArr(const std::array<int, AresDriverCore::NUM_JOINTS>& a)
     {
@@ -172,11 +167,6 @@ int main(int argc, char **argv)
     RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node (policy: %s)...", policy_name.c_str());
 
     auto node = std::make_shared<AresDriverNode>(policy_name);
-
-    rclcpp::on_shutdown([node]() {
-        RCLCPP_INFO(rclcpp::get_logger("main"), "Setting damping mode...");
-        node->SetDampingMode();
-    });
 
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(node);

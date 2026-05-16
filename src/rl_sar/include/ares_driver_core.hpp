@@ -45,7 +45,6 @@ public:
     JointFeedback GetTopicFeedback() const;
     ImuData GetImuData() const;
     GamepadCommand PollGamepad();
-    void SetDampingMode();
 
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                         const std::vector<float>& torque);

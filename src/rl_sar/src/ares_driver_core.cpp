@@ -133,17 +133,6 @@ public:
         return cmd;
     }
 
-    void SetDampingMode()
-    {
-        running_ = false;
-        if (worker_thread_.joinable())
-            worker_thread_.join();
-
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            driver_->SetMITParams(i, 0.0f, 10.0f);
-        // driver_->SetAllJointPositions({});
-    }
-
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                          const std::vector<float>& torque)
     {
@@ -394,11 +383,6 @@ AresDriverCore::ImuData AresDriverCore::GetImuData() const
 AresDriverCore::GamepadCommand AresDriverCore::PollGamepad()
 {
     return impl_->PollGamepad();
-}
-
-void AresDriverCore::SetDampingMode()
-{
-    impl_->SetDampingMode();
 }
 
 void AresDriverCore::SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
