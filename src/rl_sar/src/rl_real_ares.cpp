@@ -245,6 +245,8 @@ private:
         obs_.actions.assign(num_of_dofs_, 0);
         latest_target_pos_ = default_dof_pos_;
 
+        PublishMotorParams();
+
         rl_init_done_ = true;
         RCLCPP_INFO(get_logger(), "Init OK  dof=%d  history=%d", num_of_dofs_, history_len);
         RCLCPP_INFO(get_logger(), "  default_dof_pos: %s", FormatVector(default_dof_pos_).c_str());
@@ -350,7 +352,6 @@ private:
                 if (InitRL()) {
                     // Sensors already streaming; mark ready immediately
                     all_sensors_ready_ = true;
-                    PublishMotorParams();
                     current_state_ = State::RUNNING;
                     printf("[RL] RUNNING (%s)\n", policy_name_.c_str());
                 } else {
