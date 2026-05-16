@@ -260,16 +260,11 @@ static int cmd_errors(const std::vector<int>& joints, bool clear) {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-    printf("%-10s %8s %8s %8s\n", "Joint", "ErrCode", "Pattern", "Status");
-    printf("------------------------------------------\n");
-    bool any_fault = false;
+    printf("%-10s %8s\n", "Joint", "ErrCode");
+    printf("--------------------\n");
     for (int j : all) {
         auto err = ctx.ctrl->GetMotorError(ctx.motor_idx[j]);
-        bool fault = (err.pattern == 2);
-        if (fault) any_fault = true;
-        printf("%-10s  0x%02X      %2d    %s\n",
-               kJointNames[j], err.error_code, err.pattern,
-               fault ? "** FAULT **" : "OK");
+        printf("%-10s  0x%02X\n", kJointNames[j], err.error_code);
     }
 
     if (clear) {
@@ -285,8 +280,6 @@ static int cmd_errors(const std::vector<int>& joints, bool clear) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         printf("Done.\n");
-    } else if (any_fault) {
-        printf("\nFaults detected. Use -c flag to clear errors.\n");
     }
 
     for (int j : all)
