@@ -9,7 +9,7 @@ Every code change MUST be build-tested on the remote machine before marking comp
 1. Push local commits to the dev branch on GitHub (`git push origin dev/<feature>`)
 2. Pull on remote, then build:
    ```bash
-   ssh wufy@100.66.202.29 "source /opt/ros/jazzy/setup.bash && cd ~/projects/rl_sar-ARES && git fetch origin && git checkout dev/<feature> && git pull origin dev/<feature> && bash build.sh make"
+   ssh wufy@100.66.202.29 "source /opt/ros/jazzy/setup.bash && cd ~/projects/rl_sar-ARES && git fetch origin && git checkout dev/<feature> && git pull origin dev/<feature> && bash build.sh"
    ```
 
 Key details:
@@ -28,5 +28,10 @@ Key details:
 | `rl_real_ares.cpp` | RL control node — observation buffer, ONNX inference loop at 200Hz, kp/kd param updates on policy switch |
 | `keyboard_helper.cpp/.hpp` | Reusable non-blocking stdin reader — `kbhit()` returns ASCII or -1, termios raw mode with `atexit()` restore |
 
+### Naming Conventions
 
-
+Use short, domain-standard abbreviations that are unambiguous:
+- **Good:** `cfg`, `obs`, `buf`, `dims`, `dt`, `kp`, `kd`, `vec`, `dof`, `fn`, `tmp`
+- **Bad:** `flt`, `strs`, `gv`, `ov`, `os` — ambiguous, don't convey the meaning
+- Lambda/local helpers: use clear verb-prefixed names like `read_floats`, `load_config`
+- A one-line comment clarifying the variable is acceptable when the abbreviation is very terse
