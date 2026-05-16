@@ -1,5 +1,7 @@
 install/
 build/
 log/
+policy/ares_himloco/himloco/
+policy/dogv2_cts/cts/
 *.so
 *.a
