@@ -152,7 +152,7 @@ Or run separately:
 
 ## Shutdown Behavior
 
-On Ctrl+C, `ares_driver_node` enters **damping mode**: sets kp=0, kd=10 for all joints and holds current position. This provides safe resistance to gravity without active position control.
+On Ctrl+C, both nodes exit cleanly. The driver node's worker thread joins immediately (non-blocking keyboard input ensures no hang on shutdown). Motors are **not** commanded during shutdown — they retain whatever state the hardware was in.
 
 ## State Machine (Keyboard Mode Switching)
 
