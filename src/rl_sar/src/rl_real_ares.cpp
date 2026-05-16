@@ -31,10 +31,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <iomanip>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -245,6 +247,10 @@ private:
 
         rl_init_done_ = true;
         RCLCPP_INFO(get_logger(), "Init OK  dof=%d  history=%d", num_of_dofs_, history_len);
+        RCLCPP_INFO(get_logger(), "  default_dof_pos: %s", FormatVector(default_dof_pos_).c_str());
+        RCLCPP_INFO(get_logger(), "  action_scale:    %s", FormatVector(action_scale_).c_str());
+        RCLCPP_INFO(get_logger(), "  commands_scale:  %s", FormatVector(commands_scale_).c_str());
+        RCLCPP_INFO(get_logger(), "  observations:    %s", FormatStringVector(observations_).c_str());
         return true;
     }
 
@@ -297,9 +303,20 @@ private:
         if (!last_print_time_ ||
             std::chrono::duration<float>(now - *last_print_time_).count() >= 1.0f) {
             last_print_time_ = now;
-            printf("\033[2J\033[H%-8s [%s] inf:%.1fms #%d  [0]=S [1]=H [2]=C\n",
+            printf("\033[2J\033[H");
+            printf("%-8s [%s] inf:%.1fms #%d  [0]=S [1]=H [2]=C\n",
                    current_state_ == State::STOPPED ? "STOPPED" : "RUNNING",
                    policy_name_.c_str(), inference_time_ms_, inference_count_);
+            printf("Joint          DofPos       DofVel       DofTrq       Target\n");
+            printf("-------------------------------------------------------------------\n");
+            for (int i = 0; i < num_of_dofs_; ++i) {
+                int t = driver_to_topic_[i];
+                printf("%-12s %10.4f %10.4f %10.4f %10.4f\n",
+                       kJointNames[i],
+                       obs_.dof_pos[t], obs_.dof_vel[t],
+                       joint_torque_[t], latest_target_pos_[t]);
+            }
+            fflush(stdout);
         }
     }
 
@@ -549,6 +566,30 @@ private:
                 i < (int)current_torque_limits_.size() ? current_torque_limits_[i] : 17.0f);
         }
         motor_param_pub_->publish(msg);
+    }
+
+    std::string FormatVector(const std::vector<float>& values) const
+    {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(4) << "[";
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0) oss << ", ";
+            oss << values[i];
+        }
+        oss << "]";
+        return oss.str();
+    }
+
+    std::string FormatStringVector(const std::vector<std::string>& values) const
+    {
+        std::ostringstream oss;
+        oss << "[";
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0) oss << ", ";
+            oss << values[i];
+        }
+        oss << "]";
+        return oss.str();
     }
 
     // ---- Members -------------------------------------------------------------
