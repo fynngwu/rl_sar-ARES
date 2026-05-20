@@ -41,7 +41,25 @@
 #include <string>
 #include <vector>
 
+struct PositionLimit { float lower; float upper; };
 
+static constexpr std::array<PositionLimit, 12> kPositionLimits = {{
+    // HipA: LF, LR, RF, RR  (driver order)
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    // HipF: LF, LR, RF, RR
+    {-1.2217658f,  0.8726683f},
+    {-1.2217305f,  0.8726683f},
+    {-0.8726999f,  1.2217342f},
+    {-0.8726999f,  1.2217305f},
+    // Knee: LF, LR, RF, RR
+    {-1.0217299f,  0.8f},
+    {-1.0217299f,  0.8f},
+    {-0.8f,        1.0217287f},
+    {-0.8f,        1.0217287f},
+}};
 
 class ARSNode : public rclcpp::Node
 {
@@ -185,15 +203,17 @@ private:
                     default_dof_pos_.push_back(p.as<float>());
             }
 
-            // Build driver_to_topic_ from topic_to_driver (same as ares_driver_core.cpp)
+            // Build mapping tables from driver order ↔ topic order
             if (robot_config["topic_to_driver"]) {
                 auto t2d = robot_config["topic_to_driver"];
-                std::array<int, 12> topic_to_driver{};
                 for (int i = 0; i < 12; ++i)
-                    topic_to_driver[i] = t2d[i].as<int>();
+                    topic_to_driver_[i] = t2d[i].as<int>();
                 for (int i = 0; i < 12; ++i)
-                    driver_to_topic_[topic_to_driver[i]] = i;
+                    driver_to_topic_[topic_to_driver_[i]] = i;
             }
+
+            RCLCPP_INFO(this->get_logger(), "  topic_to_driver: %s", FmtIntArr(topic_to_driver_).c_str());
+            RCLCPP_INFO(this->get_logger(), "  driver_to_topic: %s", FmtIntArr(driver_to_topic_).c_str());
 
             if (robot_config["record"] && robot_config["record"]["enabled"]) {
                 std::string filepath = robot_config["record"]["filepath"].as<std::string>();
@@ -370,12 +390,19 @@ private:
                 output_dof_pos = default_dof_pos_;
         }
 
+        // output_dof_pos is in topic order → map to driver order and clamp
+        std::vector<float> driver_cmd(num_of_dofs_);
+        for (int i = 0; i < num_of_dofs_; ++i)
+            driver_cmd[topic_to_driver_[i]] = output_dof_pos[i];
+        for (int i = 0; i < num_of_dofs_; ++i)
+            driver_cmd[i] = std::clamp(driver_cmd[i],
+                                        kPositionLimits[i].lower,
+                                        kPositionLimits[i].upper);
+
         sensor_msgs::msg::JointState cmd_msg;
         cmd_msg.header.stamp = this->now();
         for (int i = 0; i < num_of_dofs_; ++i)
-        {
-            cmd_msg.position.push_back(output_dof_pos[i]);
-        }
+            cmd_msg.position.push_back(driver_cmd[i]);
         motor_command_pub_->publish(cmd_msg);
     }
 
@@ -495,11 +522,13 @@ private:
         std::lock_guard<std::mutex> lock(data_mutex_);
 
         size_t count = std::min(msg->position.size(), static_cast<size_t>(num_of_dofs_));
+        // msg is in driver order → map to topic order for model
         for (size_t i = 0; i < count; ++i)
         {
-            joint_pos_[i] = msg->position[i];
-            joint_vel_[i] = msg->velocity[i];
-            joint_torque_[i] = msg->effort[i];
+            int topic_idx = driver_to_topic_[i];
+            joint_pos_[topic_idx] = msg->position[i];
+            joint_vel_[topic_idx] = msg->velocity[i];
+            joint_torque_[topic_idx] = msg->effort[i];
         }
 
         motor_feedback_received_ = true;
@@ -621,6 +650,16 @@ private:
         return latest_path;
     }
 
+    std::string FmtIntArr(const std::array<int, 12> &arr) const
+    {
+        std::ostringstream oss;
+        oss << "[";
+        for (size_t i = 0; i < arr.size(); ++i)
+            oss << (i ? "," : "") << arr[i];
+        oss << "]";
+        return oss.str();
+    }
+
     std::string FormatVector(const std::vector<float> &values) const
     {
         std::ostringstream oss;
@@ -667,6 +706,7 @@ private:
     std::array<float, 12> joint_pos_{};
     std::array<float, 12> joint_vel_{};
     std::array<float, 12> joint_torque_{};
+    std::array<int, 12> topic_to_driver_{};
     std::array<int, 12> driver_to_topic_{};
     std::array<float, 3> commands_buffer_{};
     std::array<float, 3> imu_gyro_{};        // angular velocity (body frame, rad/s)

@@ -33,8 +33,6 @@ public:
           core_(std::make_unique<AresDriverCore>(std::string(POLICY_DIR), policy_name))
     {
         RCLCPP_INFO(this->get_logger(), "Initializing ARES Driver Node...");
-        RCLCPP_INFO(this->get_logger(), "  topic_to_driver: %s", FmtIntArr(core_->topic_to_driver()).c_str());
-        RCLCPP_INFO(this->get_logger(), "  driver_to_topic: %s", FmtIntArr(core_->driver_to_topic()).c_str());
         RCLCPP_INFO(this->get_logger(), "  kp: %s", FmtFloatVec(core_->config_kp()).c_str());
         RCLCPP_INFO(this->get_logger(), "  kd: %s", FmtFloatVec(core_->config_kd()).c_str());
         RCLCPP_INFO(this->get_logger(), "  torque_limits: %s", FmtFloatVec(core_->config_torque()).c_str());
@@ -67,16 +65,6 @@ public:
     }
 
 private:
-    std::string FmtIntArr(const std::array<int, AresDriverCore::NUM_JOINTS>& a)
-    {
-        std::ostringstream oss;
-        oss << "[";
-        for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i)
-            oss << (i ? "," : "") << a[i];
-        oss << "]";
-        return oss.str();
-    }
-
     std::string FmtFloatVec(const std::vector<float>& v)
     {
         std::ostringstream oss;

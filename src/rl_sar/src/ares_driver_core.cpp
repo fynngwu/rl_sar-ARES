@@ -13,24 +13,6 @@
 
 #include <yaml-cpp/yaml.h>
 
-static constexpr std::array<std::pair<float, float>, AresDriverCore::NUM_JOINTS> kPositionLimits = {{
-    // HipA: LF, LR, RF, RR
-    {-0.7853982f,  0.7853982f},
-    {-0.7853982f,  0.7853982f},
-    {-0.7853982f,  0.7853982f},
-    {-0.7853982f,  0.7853982f},
-    // HipF: LF, LR, RF, RR
-    {-1.2217658f,  0.8726683f},
-    {-1.2217305f,  0.8726683f},
-    {-0.8726999f,  1.2217342f},
-    {-0.8726999f,  1.2217305f},
-    // Knee: LF, LR, RF, RR
-    {-1.0217299f,  0.8f},
-    {-1.0217299f,  0.8f},
-    {-0.8f,        1.0217287f},
-    {-0.8f,        1.0217287f},
-}};
-
 class AresDriverCore::Impl {
 public:
     explicit Impl(const std::string& policy_dir, const std::string& policy_name)
@@ -41,12 +23,6 @@ public:
         YAML::Node rc = YAML::LoadFile(config_path)[policy_name];
         if (!rc)
             throw std::runtime_error("Missing '" + policy_name + "' in " + config_path);
-
-        auto t2d = rc["topic_to_driver"];
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            topic_to_driver_[i] = t2d[i].as<int>();
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            driver_to_topic_[topic_to_driver_[i]] = i;
 
         auto load_float_array = [&](const YAML::Node& n) -> std::vector<float> {
             if (n.IsSequence()) {
@@ -97,10 +73,9 @@ public:
         auto joint_states = driver_->GetJointStates();
         JointFeedback feedback;
         for (int i = 0; i < NUM_JOINTS; ++i) {
-            int di = topic_to_driver_[i];
-            feedback.position[i] = joint_states.position[di];
-            feedback.velocity[i] = joint_states.velocity[di];
-            feedback.torque[i] = joint_states.torque[di];
+            feedback.position[i] = joint_states.position[i];
+            feedback.velocity[i] = joint_states.velocity[i];
+            feedback.torque[i] = joint_states.torque[i];
         }
         return feedback;
     }
@@ -152,20 +127,13 @@ public:
         constexpr auto COMMAND_PERIOD = std::chrono::milliseconds(5);
 
         while (running_) {
-            std::array<float, NUM_JOINTS> topic_target;
+            std::array<float, NUM_JOINTS> target;
             {
                 std::lock_guard<std::mutex> lock(cmd_mutex_);
-                topic_target = latest_target_;
+                target = latest_target_;
             }
 
-            std::array<float, NUM_JOINTS> driver_target;
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_target[i] = topic_target[driver_to_topic_[i]];
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_target[i] = std::clamp(driver_target[i],
-                                               kPositionLimits[i].first,
-                                               kPositionLimits[i].second);
-            driver_->SetAllJointPositions(driver_target);
+            driver_->SetAllJointPositions(target);
 
             next_tick += COMMAND_PERIOD;
             std::this_thread::sleep_until(next_tick);
@@ -188,8 +156,6 @@ public:
     std::vector<float> config_kd_;
     std::vector<float> config_torque_;
     float gamepad_scale_ = 0.0f;
-    std::array<int, NUM_JOINTS> topic_to_driver_{};
-    std::array<int, NUM_JOINTS> driver_to_topic_{};
     static constexpr float HEIGHT_MIN = -0.05f;
     static constexpr float HEIGHT_MAX = 0.05f;
     static constexpr float HEIGHT_STEP = 0.005f;
@@ -226,16 +192,6 @@ AresDriverCore::GamepadCommand AresDriverCore::PollGamepad()
 void AresDriverCore::SetDampingMode()
 {
     impl_->SetDampingMode();
-}
-
-const std::array<int, AresDriverCore::NUM_JOINTS>& AresDriverCore::topic_to_driver() const
-{
-    return impl_->topic_to_driver_;
-}
-
-const std::array<int, AresDriverCore::NUM_JOINTS>& AresDriverCore::driver_to_topic() const
-{
-    return impl_->driver_to_topic_;
 }
 
 const std::vector<float>& AresDriverCore::config_kp() const
