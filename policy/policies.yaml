@@ -1,0 +1,6 @@
+# Policy registry
+# Each entry maps a keyboard key to a policy directory name.
+# Add new entries here without recompiling the code.
+"1": ares_himloco/himloco
+"2": dogv2_cts/cts
+"3": dream_waq/dream_waq

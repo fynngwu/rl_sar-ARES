@@ -137,7 +137,7 @@ public:
         printf("Keys:\n");
         printf("  [s] STAND   — stand up (from DISABLE or RL)\n");
         printf("  [r] RL      — run RL policy (from STAND only)\n");
-        printf("  [d] DISABLE — disable motors (from RL only)\n");
+        printf("  [d] DISABLE — disable motors (from STAND or RL)\n");
         printf("=============================\n\n");
     }
 
@@ -146,16 +146,13 @@ public:
         // --- Detect initial mode ---
         auto joint_states = driver_->GetJointStates();
         bool all_near_zero = true;
-        bool any_online = false;
         for (int i = 0; i < NUM_JOINTS; ++i) {
-            if (std::abs(joint_states.position[i]) > 0.05f)
+            if (std::abs(joint_states.position[i]) > 0.1f)
                 all_near_zero = false;
-            if (driver_->IsJointOnline(i))
-                any_online = true;
         }
 
-        DriverMode initial = DriverMode::DISABLE;
-        if (all_near_zero && any_online)
+        DriverMode initial = DriverMode::STAND;
+        if (all_near_zero)
             initial = DriverMode::RL;
         mode_ = initial;
 
@@ -163,11 +160,27 @@ public:
         printf("Keys: [s] Stand  [r] RL  [d] Disable\n\n");
 
         if (initial == DriverMode::RL) {
-            while (running_ && !received_first_command_.load())
+            while (running_ && !received_first_command_.load()) {
+                int key = kbhit();
+                if (key > 0) {
+                    key = std::tolower(key);
+                    handle_key_command(key);
+                    if (mode_ != DriverMode::RL)
+                        break;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
             if (!running_) return;
-        } else {
-            driver_->DisableAll();
+        } else if (initial == DriverMode::STAND) {
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            driver_->EnableAll();
+            {
+                auto states = driver_->GetJointStates();
+                stand_start_pos_ = states.position;
+            }
+            stand_step_ = 0;
+            stand_active_ = true;
         }
 
         // --- Main loop ---
@@ -189,20 +202,13 @@ public:
             // --- Mode-specific tick ---
             switch (mode_.load()) {
             case DriverMode::RL: {
-                std::array<float, NUM_JOINTS> topic_target;
+                std::array<float, NUM_JOINTS> target;
                 {
                     std::lock_guard<std::mutex> lock(cmd_mutex_);
-                    topic_target = latest_target_;
+                    target = latest_target_;
                 }
 
-                std::array<float, NUM_JOINTS> driver_target;
-                for (int i = 0; i < NUM_JOINTS; ++i)
-                    driver_target[i] = topic_target[driver_to_topic_[i]];
-                for (int i = 0; i < NUM_JOINTS; ++i)
-                    driver_target[i] = std::clamp(driver_target[i],
-                                                   kPositionLimits[i].first,
-                                                   kPositionLimits[i].second);
-                driver_->SetAllJointPositions(driver_target);
+                driver_->SetAllJointPositions(target);
 
                 next_tick += RL_PERIOD;
                 std::this_thread::sleep_until(next_tick);
@@ -217,9 +223,7 @@ public:
                     std::array<float, NUM_JOINTS> target;
                     for (int i = 0; i < NUM_JOINTS; ++i) {
                         float pos = stand_start_pos_[i] * (1.0f - alpha);
-                        target[i] = std::clamp(pos,
-                                               kPositionLimits[i].first,
-                                               kPositionLimits[i].second);
+                        target[i] = pos;
                     }
                     driver_->SetAllJointPositions(target);
                     stand_step_++;
@@ -291,6 +295,7 @@ public:
     {
         if (from == DriverMode::DISABLE && to == DriverMode::STAND) return true;
         if (from == DriverMode::STAND   && to == DriverMode::RL)     return true;
+        if (from == DriverMode::STAND   && to == DriverMode::DISABLE) return true;
         if (from == DriverMode::RL      && to == DriverMode::STAND)  return true;
         if (from == DriverMode::RL      && to == DriverMode::DISABLE) return true;
         return false;
