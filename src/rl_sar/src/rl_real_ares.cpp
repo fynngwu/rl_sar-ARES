@@ -45,10 +45,25 @@
 
 using Lock = std::lock_guard<std::mutex>;
 
-static const std::map<char, std::string> kPolicyMap = {
-    {'1', "ares_himloco/himloco"},
-    {'2', "dogv2_cts/cts"}
-};
+struct PositionLimit { float lower; float upper; };
+
+static constexpr std::array<PositionLimit, 12> kPositionLimits = {{
+    // HipA: LF, LR, RF, RR  (driver order)
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    {-0.7853982f,  0.7853982f},
+    // HipF: LF, LR, RF, RR
+    {-1.2217658f,  0.8726683f},
+    {-1.2217305f,  0.8726683f},
+    {-0.8726999f,  1.2217342f},
+    {-0.8726999f,  1.2217305f},
+    // Knee: LF, LR, RF, RR
+    {-1.0217299f,  0.8f},
+    {-1.0217299f,  0.8f},
+    {-0.8f,        1.0217287f},
+    {-0.8f,        1.0217287f},
+}};
 
 enum class State { STOPPED, RUNNING };
 
@@ -73,6 +88,23 @@ public:
         xbox_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
             "/xbox_vel", 10, std::bind(&ARSNode::XboxVelCallback, this, _1));
 
+        // Load policy registry from policies.yaml
+        {
+            std::string policies_path = std::string(POLICY_DIR) + "/policies.yaml";
+            YAML::Node root = YAML::LoadFile(policies_path);
+            for (const auto& kv : root)
+                policy_map_[kv.first.as<std::string>()[0]] = kv.second.as<std::string>();
+        }
+
+        // Validate that the requested policy exists
+        bool policy_found = false;
+        for (const auto& [key, name] : policy_map_)
+            if (name == policy_name_) { policy_found = true; break; }
+        if (!policy_found && !policy_map_.empty()) {
+            policy_name_ = policy_map_.begin()->second;
+            RCLCPP_WARN(get_logger(), "Policy not found, using first: %s", policy_name_.c_str());
+        }
+
         if (!InitRL()) { RCLCPP_ERROR(get_logger(), "RL init failed!"); return; }
 
         loop_control_ = std::make_shared<LoopFunc>("loop_control",  dt_,
@@ -81,9 +113,12 @@ public:
                                                 std::bind(&ARSNode::RunModel, this));
         loop_control_->start();  loop_rl_->start();
 
-        printf("\n=== ARES RL Controls ===\n"
-               "  [0] STOP  [1] himloco  [2] cts\n"
-               "  Switch policy from STOPPED\n\n");
+        // Dynamic help text from registry
+        std::string help = "\n=== ARES RL Controls ===\n";
+        for (const auto& [key, name] : policy_map_)
+            help += "  [" + std::string(1, key) + "] " + name + "\n";
+        help += "  [0] STOP\n  Switch policy from STOPPED\n\n";
+        printf("%s", help.c_str());
     }
 
     ~ARSNode()
@@ -156,11 +191,10 @@ private:
             // Topic reorder mapping: config joint order -> driver topic order
             if (rc["topic_to_driver"]) {
                 auto order = rc["topic_to_driver"];
-                std::array<int, 12> driver_order{};
                 for (int i = 0; i < 12; ++i)
-                    driver_order[i] = order[i].as<int>();
+                    topic_to_driver_[i] = order[i].as<int>();
                 for (int i = 0; i < 12; ++i)
-                    driver_to_topic_[driver_order[i]] = i;
+                    driver_to_topic_[topic_to_driver_[i]] = i;
             }
 
             // kp, kd, torque_limits: single float (apply to all DOFs) or per-DOF list
@@ -326,16 +360,19 @@ private:
 
     void RobotControl()
     {
-        if (!rl_init_done_ || !all_sensors_ready_) return;
+        if (!rl_init_done_) return;
 
         int key = kbhit();
 
-        // STOP: publish default positions, pause inference
+        // STOP: publish default positions (topic order -> driver order), pause inference
         if (key == '0' && current_state_ != State::STOPPED) {
             sensor_msgs::msg::JointState cmd;
             cmd.header.stamp = now();
-            for (int i = 0; i < num_of_dofs_; ++i)
-                cmd.position.push_back(default_dof_pos_[i]);
+            for (int i = 0; i < num_of_dofs_; ++i) {
+                float pos = default_dof_pos_[driver_to_topic_[i]];
+                cmd.position.push_back(std::clamp(pos,
+                    kPositionLimits[i].lower, kPositionLimits[i].upper));
+            }
             motor_command_pub_->publish(cmd);
             current_state_ = State::STOPPED;
             printf("[RL] STOPPED\n");
@@ -343,9 +380,9 @@ private:
         }
 
         // START: reinit with new policy (only valid from STOPPED)
-        if ((key == '1' || key == '2') && current_state_ == State::STOPPED) {
-            auto it = kPolicyMap.find(static_cast<char>(key));
-            if (it != kPolicyMap.end()) {
+        if (policy_map_.count(static_cast<char>(key)) && current_state_ == State::STOPPED) {
+            auto it = policy_map_.find(static_cast<char>(key));
+            if (it != policy_map_.end()) {
                 printf("[RL] Loading %s ...\n", it->second.c_str());
                 rl_init_done_ = false;
                 policy_name_ = it->second;
@@ -361,15 +398,19 @@ private:
             return;
         }
 
+        if (!all_sensors_ready_) return;
         if (current_state_ == State::STOPPED) return;
 
-        // RUNNING: publish latest target positions
+        // RUNNING: publish latest target positions (topic order -> driver order, clamp)
         sensor_msgs::msg::JointState cmd;
         cmd.header.stamp = now();
         {
             Lock lock(output_mutex_);
-            for (int i = 0; i < num_of_dofs_; ++i)
-                cmd.position.push_back(latest_target_pos_[i]);
+            for (int i = 0; i < num_of_dofs_; ++i) {
+                float pos = latest_target_pos_[driver_to_topic_[i]];
+                cmd.position.push_back(std::clamp(pos,
+                    kPositionLimits[i].lower, kPositionLimits[i].upper));
+            }
         }
         motor_command_pub_->publish(cmd);
     }
@@ -461,10 +502,12 @@ private:
     {
         Lock lock(data_mutex_);
         size_t n = std::min(msg->position.size(), static_cast<size_t>(num_of_dofs_));
+        // msg is in driver order -> map to topic order for model
         for (size_t i = 0; i < n; ++i) {
-            joint_pos_[i]    = msg->position[i];
-            joint_vel_[i]    = msg->velocity[i];
-            joint_torque_[i] = msg->effort[i];
+            int topic_idx = driver_to_topic_[i];
+            joint_pos_[topic_idx]    = msg->position[i];
+            joint_vel_[topic_idx]    = msg->velocity[i];
+            joint_torque_[topic_idx] = msg->effort[i];
         }
         motor_feedback_received_ = true;
         // Inference starts only after both IMU and feedback have arrived
@@ -607,6 +650,7 @@ private:
 
     // Sensor data buffers (written by callbacks, read by RunModel)
     std::array<float, 12> joint_pos_{}, joint_vel_{}, joint_torque_{};
+    std::array<int, 12>   topic_to_driver_{};
     std::array<int, 12>   driver_to_topic_{};
     std::array<float, 3>  commands_buffer_{}, imu_gyro_{}, imu_gravity_{};
 
@@ -640,6 +684,9 @@ private:
     float  lin_vel_scale_, ang_vel_scale_, dof_pos_scale_, dof_vel_scale_;
     float  gravity_vec_scale_, clip_obs_;
     std::vector<float> current_kp_, current_kd_, current_torque_limits_;
+
+    // Policy registry (loaded from policies.yaml at startup)
+    std::map<char, std::string> policy_map_;
 
     // Runtime state
     bool   rl_init_done_{false}, all_sensors_ready_{false};
