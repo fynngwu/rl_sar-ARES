@@ -1,9 +1,16 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
+
+enum class DriverMode : uint8_t {
+    DISABLE,
+    STAND,
+    RL
+};
 
 class AresDriverCore {
 public:
@@ -38,7 +45,12 @@ public:
     JointFeedback GetTopicFeedback() const;
     ImuData GetImuData() const;
     GamepadCommand PollGamepad();
-    void SetDampingMode();
+
+    void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
+                        const std::vector<float>& torque);
+
+    DriverMode GetMode() const;
+    void PrintModeHelp() const;
 
     const std::vector<float>& config_kp() const;
     const std::vector<float>& config_kd() const;

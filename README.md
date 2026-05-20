@@ -152,7 +152,48 @@ Or run separately:
 
 ## Shutdown Behavior
 
-On Ctrl+C, `ares_driver_node` enters **damping mode**: sets kp=0, kd=10 for all joints and holds current position. This provides safe resistance to gravity without active position control.
+On Ctrl+C, both nodes exit cleanly. The driver node's worker thread joins immediately (non-blocking keyboard input ensures no hang on shutdown). Motors are **not** commanded during shutdown — they retain whatever state the hardware was in.
+
+## State Machine (Keyboard Mode Switching)
+
+`ares_driver_node` now includes a three-mode state machine controllable via keyboard.
+
+### Launch
+
+```bash
+./run.sh                    # both nodes
+# or separately:
+ares_driver_node            # Terminal 1 — keyboard input goes here
+```
+
+### Modes
+
+| Key | Command | Description |
+|-----|---------|-------------|
+| `s` | STAND | Enable motors, slowly stand up to zero pose over 2s, then hold |
+| `r` | RL | Run RL policy (normal operation, receives `/motor_command` topic) |
+| `d` | DISABLE | Disable all motors (power off) |
+
+### Transition Diagram
+
+```
+DISABLE ──s──> STAND ──r──> RL
+                ^            │
+                │            ├──s──> STAND
+                │            └──d──> DISABLE
+```
+
+- **DISABLE → STAND**: `s` key — motors enable and stand up
+- **STAND → RL**: `r` key — start RL policy control
+- **RL → STAND**: `s` key — interpolate back to zero pose
+- **RL → DISABLE**: `d` key — shut down motors
+- All other transitions are ignored (e.g. DISABLE → RL directly is not allowed)
+
+### Initial Mode
+
+On startup, the system detects:
+- If all joints are online and near position 0 → **RL mode** (ready to run)
+- Otherwise → **DISABLE mode** (safe default, user must press `s` then `r`)
 
 ## Directory Structure
 
