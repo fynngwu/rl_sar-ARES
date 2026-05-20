@@ -40,8 +40,6 @@ public:
     GamepadCommand PollGamepad();
     void SetDampingMode();
 
-    const std::array<int, NUM_JOINTS>& topic_to_driver() const;
-    const std::array<int, NUM_JOINTS>& driver_to_topic() const;
     const std::vector<float>& config_kp() const;
     const std::vector<float>& config_kd() const;
     const std::vector<float>& config_torque() const;
