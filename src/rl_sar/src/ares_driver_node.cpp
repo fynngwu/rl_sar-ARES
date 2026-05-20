@@ -52,16 +52,16 @@ public:
             "/motor_command", 10,
             std::bind(&AresDriverNode::MotorCommandCallback, this, std::placeholders::_1));
 
+        motor_param_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
+            "/motor_param_update", 1,
+            std::bind(&AresDriverNode::MotorParamCallback, this, std::placeholders::_1));
+
         feedback_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(10),
             std::bind(&AresDriverNode::FeedbackTimerCallback, this));
 
         RCLCPP_INFO(this->get_logger(), "ARES Driver Node started");
-    }
-
-    void SetDampingMode()
-    {
-        core_->SetDampingMode();
+        core_->PrintModeHelp();
     }
 
 private:
@@ -84,6 +84,21 @@ private:
         for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i)
             target[i] = msg->position[i];
         core_->SetTopicCommand(target);
+    }
+
+    void MotorParamCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
+    {
+        if (msg->position.size() < AresDriverCore::NUM_JOINTS)
+            return;
+        std::vector<float> kp(msg->position.begin(), msg->position.begin() + AresDriverCore::NUM_JOINTS);
+        std::vector<float> kd(AresDriverCore::NUM_JOINTS, 0.0f);
+        std::vector<float> torque;
+        if (msg->velocity.size() >= AresDriverCore::NUM_JOINTS)
+            kd.assign(msg->velocity.begin(), msg->velocity.begin() + AresDriverCore::NUM_JOINTS);
+        if (msg->effort.size() >= AresDriverCore::NUM_JOINTS)
+            torque.assign(msg->effort.begin(), msg->effort.begin() + AresDriverCore::NUM_JOINTS);
+        core_->SetMotorParams(kp, kd, torque);
+        RCLCPP_INFO(this->get_logger(), "Motor params updated from /motor_param_update");
     }
 
     void FeedbackTimerCallback()
@@ -129,6 +144,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_command_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
     rclcpp::TimerBase::SharedPtr feedback_timer_;
 };
 
@@ -139,11 +155,6 @@ int main(int argc, char **argv)
     RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node (policy: %s)...", policy_name.c_str());
 
     auto node = std::make_shared<AresDriverNode>(policy_name);
-
-    rclcpp::on_shutdown([node]() {
-        RCLCPP_INFO(rclcpp::get_logger("main"), "Setting damping mode...");
-        node->SetDampingMode();
-    });
 
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(node);

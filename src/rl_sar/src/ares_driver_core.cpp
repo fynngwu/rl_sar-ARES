@@ -1,4 +1,5 @@
 #include "ares_driver_core.hpp"
+#include "keyboard_helper.hpp"
 
 #include "dog_driver.hpp"
 #include "observations.hpp"
@@ -6,6 +7,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -105,41 +108,202 @@ public:
         return cmd;
     }
 
-    void SetDampingMode()
+    void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
+                         const std::vector<float>& torque)
     {
-        running_ = false;
-        if (worker_thread_.joinable())
-            worker_thread_.join();
+        size_t n = std::min({kp.size(), kd.size(), static_cast<size_t>(NUM_JOINTS)});
+        for (size_t i = 0; i < n; ++i) {
+            driver_->SetMITParams(i, kp[i], kd[i]);
+        }
+        if (!torque.empty()) {
+            size_t tn = std::min(torque.size(), static_cast<size_t>(NUM_JOINTS));
+            for (size_t i = 0; i < tn; ++i)
+                driver_->SetTorqueLimit(i, torque[i]);
+        }
+        config_kp_.assign(kp.begin(), kp.begin() + n);
+        config_kd_.assign(kd.begin(), kd.begin() + n);
+        if (!torque.empty())
+            config_torque_.assign(torque.begin(), torque.begin() + std::min(torque.size(), static_cast<size_t>(NUM_JOINTS)));
+        printf("[DRIVER] Motor params updated: kp=%.1f..%.1f kd=%.2f..%.2f\n",
+               kp.front(), kp.back(), kd.front(), kd.back());
+    }
 
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            driver_->SetMITParams(i, 0.0f, 10.0f);
-        // driver_->SetAllJointPositions({});
+    DriverMode GetMode() const { return mode_.load(); }
+
+    void PrintModeHelp() const
+    {
+        printf("\n=== ARES Driver Mode Help ===\n");
+        printf("Current mode: %s\n", mode_name(mode_.load()));
+        printf("Keys:\n");
+        printf("  [s] STAND   — stand up (from DISABLE or RL)\n");
+        printf("  [r] RL      — run RL policy (from STAND only)\n");
+        printf("  [d] DISABLE — disable motors (from RL only)\n");
+        printf("=============================\n\n");
     }
 
     void CommandLoop()
     {
-        while (running_ && !received_first_command_.load())
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        if (!running_)
-            return;
+        // --- Detect initial mode ---
+        auto joint_states = driver_->GetJointStates();
+        bool all_near_zero = true;
+        bool any_online = false;
+        for (int i = 0; i < NUM_JOINTS; ++i) {
+            if (std::abs(joint_states.position[i]) > 0.05f)
+                all_near_zero = false;
+            if (driver_->IsJointOnline(i))
+                any_online = true;
+        }
+
+        DriverMode initial = DriverMode::DISABLE;
+        if (all_near_zero && any_online)
+            initial = DriverMode::RL;
+        mode_ = initial;
+
+        printf("\n[MODE] Initial state: %s\n", mode_name(initial));
+        printf("Keys: [s] Stand  [r] RL  [d] Disable\n\n");
+
+        if (initial == DriverMode::RL) {
+            while (running_ && !received_first_command_.load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (!running_) return;
+        } else {
+            driver_->DisableAll();
+        }
+
+        // --- Main loop ---
+        constexpr auto RL_PERIOD = std::chrono::milliseconds(5);
+        constexpr auto STAND_DT  = std::chrono::milliseconds(20);
+        constexpr auto DISABLE_DT = std::chrono::milliseconds(50);
+        constexpr int STAND_STEPS = 100;
 
         auto next_tick = std::chrono::steady_clock::now();
-        constexpr auto COMMAND_PERIOD = std::chrono::milliseconds(5);
 
         while (running_) {
-            std::array<float, NUM_JOINTS> target;
-            {
-                std::lock_guard<std::mutex> lock(cmd_mutex_);
-                target = latest_target_;
+            // --- Keyboard input ---
+            int key = kbhit();
+            if (key > 0) {
+                key = std::tolower(key);
+                handle_key_command(key);
             }
 
-            driver_->SetAllJointPositions(target);
+            // --- Mode-specific tick ---
+            switch (mode_.load()) {
+            case DriverMode::RL: {
+                std::array<float, NUM_JOINTS> topic_target;
+                {
+                    std::lock_guard<std::mutex> lock(cmd_mutex_);
+                    topic_target = latest_target_;
+                }
 
-            next_tick += COMMAND_PERIOD;
-            std::this_thread::sleep_until(next_tick);
-            if (std::chrono::steady_clock::now() > next_tick + COMMAND_PERIOD)
+                std::array<float, NUM_JOINTS> driver_target;
+                for (int i = 0; i < NUM_JOINTS; ++i)
+                    driver_target[i] = topic_target[driver_to_topic_[i]];
+                for (int i = 0; i < NUM_JOINTS; ++i)
+                    driver_target[i] = std::clamp(driver_target[i],
+                                                   kPositionLimits[i].first,
+                                                   kPositionLimits[i].second);
+                driver_->SetAllJointPositions(driver_target);
+
+                next_tick += RL_PERIOD;
+                std::this_thread::sleep_until(next_tick);
+                if (std::chrono::steady_clock::now() > next_tick + RL_PERIOD)
+                    next_tick = std::chrono::steady_clock::now();
+                break;
+            }
+
+            case DriverMode::STAND: {
+                if (stand_step_ <= STAND_STEPS) {
+                    float alpha = (float)stand_step_ / STAND_STEPS;
+                    std::array<float, NUM_JOINTS> target;
+                    for (int i = 0; i < NUM_JOINTS; ++i) {
+                        float pos = stand_start_pos_[i] * (1.0f - alpha);
+                        target[i] = std::clamp(pos,
+                                               kPositionLimits[i].first,
+                                               kPositionLimits[i].second);
+                    }
+                    driver_->SetAllJointPositions(target);
+                    stand_step_++;
+                } else {
+                    std::array<float, NUM_JOINTS> target{};
+                    driver_->SetAllJointPositions(target);
+                }
                 next_tick = std::chrono::steady_clock::now();
+                std::this_thread::sleep_for(STAND_DT);
+                break;
+            }
+
+            case DriverMode::DISABLE:
+                next_tick = std::chrono::steady_clock::now();
+                std::this_thread::sleep_for(DISABLE_DT);
+                break;
+            }
         }
+    }
+
+    void handle_key_command(int key)
+    {
+        DriverMode cur = mode_.load();
+        DriverMode tgt = cur;
+
+        if (key == 's' && cur != DriverMode::STAND)
+            tgt = DriverMode::STAND;
+        else if (key == 'r')
+            tgt = DriverMode::RL;
+        else if (key == 'd')
+            tgt = DriverMode::DISABLE;
+
+        if (tgt == cur)
+            return;
+
+        if (!transition_allowed(cur, tgt)) {
+            printf("[MODE] Cannot transition from %s to %s\n",
+                   mode_name(cur), mode_name(tgt));
+            return;
+        }
+
+        // Perform transition
+        printf("[MODE] %s → %s\n", mode_name(cur), mode_name(tgt));
+        mode_ = tgt;
+
+        switch (tgt) {
+        case DriverMode::STAND:
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            driver_->EnableAll();
+            {
+                auto states = driver_->GetJointStates();
+                stand_start_pos_ = states.position;
+            }
+            stand_step_ = 0;
+            stand_active_ = true;
+            break;
+        case DriverMode::RL:
+            stand_active_ = false;
+            break;
+        case DriverMode::DISABLE:
+            driver_->DisableAll();
+            stand_active_ = false;
+            break;
+        }
+    }
+
+    static bool transition_allowed(DriverMode from, DriverMode to)
+    {
+        if (from == DriverMode::DISABLE && to == DriverMode::STAND) return true;
+        if (from == DriverMode::STAND   && to == DriverMode::RL)     return true;
+        if (from == DriverMode::RL      && to == DriverMode::STAND)  return true;
+        if (from == DriverMode::RL      && to == DriverMode::DISABLE) return true;
+        return false;
+    }
+
+    static const char* mode_name(DriverMode m)
+    {
+        switch (m) {
+        case DriverMode::DISABLE: return "DISABLE";
+        case DriverMode::STAND:   return "STAND";
+        case DriverMode::RL:      return "RL";
+        }
+        return "???";
     }
 
     std::unique_ptr<DogDriver> driver_;
@@ -150,7 +314,12 @@ public:
     mutable std::mutex cmd_mutex_;
     std::array<float, NUM_JOINTS> latest_target_{};
     std::atomic<bool> received_first_command_;
+    std::atomic<DriverMode> mode_{DriverMode::DISABLE};
     std::atomic<bool> running_;
+
+    bool stand_active_ = false;
+    int stand_step_ = 0;
+    std::array<float, NUM_JOINTS> stand_start_pos_{};
 
     std::vector<float> config_kp_;
     std::vector<float> config_kd_;
@@ -189,9 +358,20 @@ AresDriverCore::GamepadCommand AresDriverCore::PollGamepad()
     return impl_->PollGamepad();
 }
 
-void AresDriverCore::SetDampingMode()
+void AresDriverCore::SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
+                                     const std::vector<float>& torque)
 {
-    impl_->SetDampingMode();
+    impl_->SetMotorParams(kp, kd, torque);
+}
+
+DriverMode AresDriverCore::GetMode() const
+{
+    return impl_->GetMode();
+}
+
+void AresDriverCore::PrintModeHelp() const
+{
+    impl_->PrintModeHelp();
 }
 
 const std::vector<float>& AresDriverCore::config_kp() const
