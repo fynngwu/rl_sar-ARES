@@ -86,7 +86,7 @@ private:
 
     std::array<int, 12> topic_to_driver_{}, driver_to_topic_{};
 
-    State  current_state_{State::RUNNING};
+    State  current_state_{State::STOPPED};
     bool   rl_init_done_{false};
     int    inference_count_{0};
     double inference_time_ms_{0.0};

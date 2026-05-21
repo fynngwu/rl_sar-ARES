@@ -101,10 +101,10 @@ public:
             height_value_ = std::max(HEIGHT_MIN, height_value_ - HEIGHT_STEP);
 
         cmd.connected = true;
-        cmd.linear_x = gamepad_->GetAxis(1) * gamepad_scale_;
+        cmd.linear_x = -gamepad_->GetAxis(1) * gamepad_scale_;
         cmd.linear_y = -gamepad_->GetAxis(0) * gamepad_scale_;
         cmd.linear_z = height_value_;
-        cmd.angular_z = gamepad_->GetAxis(3) * gamepad_scale_;
+        cmd.angular_z = -gamepad_->GetAxis(3) * gamepad_scale_;
         return cmd;
     }
 
