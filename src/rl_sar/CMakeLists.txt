@@ -185,12 +185,27 @@ endif()
 # library for observation buffer
 add_library(observation_buffer library/core/observation_buffer/observation_buffer.cpp)
 
+# Static library for pure RL logic (no ROS2 dependency, fast compile)
+add_library(rl_core STATIC src/rl_core.cpp)
+target_include_directories(rl_core PUBLIC
+    include
+    library/core/observation_buffer
+    library/core/loop
+    library/core/inference_runtime
+    library/core/logger
+)
+target_link_libraries(rl_core PUBLIC
+    inference_runtime
+    observation_buffer
+    ${YAML_CPP_LIBRARIES}
+    Threads::Threads
+)
+
 # executable for ARES RL inference node (ROS2 topic interface)
 if(SYSTEM_TYPE STREQUAL "Linux")
-    add_executable(ares src/rl_real_ares.cpp src/keyboard_helper.cpp)
+    add_executable(ares src/rl_node.cpp src/keyboard_helper.cpp)
     target_link_libraries(ares
-        inference_runtime
-        observation_buffer
+        rl_core
         ${YAML_CPP_LIBRARIES}
         Threads::Threads
         rclcpp::rclcpp
