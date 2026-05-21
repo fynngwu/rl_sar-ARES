@@ -43,16 +43,17 @@ public:
                 policy_map_[kv.first.as<std::string>()[0]] = kv.second.as<std::string>();
         }
 
-        std::string selected = policy_name;
-        bool policy_found = false;
-        for (const auto& [key, name] : policy_map_)
-            if (name == selected) { policy_found = true; break; }
-        if (!policy_found && !policy_map_.empty()) {
-            selected = policy_map_.begin()->second;
-            RCLCPP_WARN(get_logger(), "Policy not found, using first: %s", selected.c_str());
+        if (!policy_name.empty()) {
+            std::string selected = policy_name;
+            bool policy_found = false;
+            for (const auto& [key, name] : policy_map_)
+                if (name == selected) { policy_found = true; break; }
+            if (!policy_found && !policy_map_.empty()) {
+                selected = policy_map_.begin()->second;
+                RCLCPP_WARN(get_logger(), "Policy not found, using first: %s", selected.c_str());
+            }
+            if (!InitRL(selected)) { RCLCPP_ERROR(get_logger(), "RL init failed!"); return; }
         }
-
-        if (!InitRL(selected)) { RCLCPP_ERROR(get_logger(), "RL init failed!"); return; }
 
         loop_control_ = std::make_shared<LoopFunc>("loop_control", rl_.GetDt(),
                                                      std::bind(&ARSNode::RobotControl, this));
@@ -115,9 +116,27 @@ private:
 
     void RobotControl()
     {
-        if (!rl_.IsInitialized()) return;
-
         int key = kbhit();
+
+        // Policy switch: from uninitialized or from STOPPED
+        if (policy_map_.count(static_cast<char>(key)) &&
+            (!rl_.IsInitialized() || rl_.GetState() == AresRL::State::STOPPED)) {
+            auto it = policy_map_.find(static_cast<char>(key));
+            if (it != policy_map_.end()) {
+                printf("[RL] Loading %s ...\n", it->second.c_str());
+                if (InitRL(it->second)) {
+                    all_sensors_ready_ = true;
+                    rl_.SetState(AresRL::State::RUNNING);
+                    printf("[RL] RUNNING (%s)\n", it->second.c_str());
+                } else {
+                    printf("[RL] Init FAILED\n");
+                }
+            }
+            return;
+        }
+
+        // Not initialized — nothing more to do
+        if (!rl_.IsInitialized()) return;
 
         if (key == '0' && rl_.GetState() != AresRL::State::STOPPED) {
             sensor_msgs::msg::JointState cmd;
@@ -133,21 +152,6 @@ private:
             motor_command_pub_->publish(cmd);
             rl_.SetState(AresRL::State::STOPPED);
             printf("[RL] STOPPED\n");
-            return;
-        }
-
-        if (policy_map_.count(static_cast<char>(key)) && rl_.GetState() == AresRL::State::STOPPED) {
-            auto it = policy_map_.find(static_cast<char>(key));
-            if (it != policy_map_.end()) {
-                printf("[RL] Loading %s ...\n", it->second.c_str());
-                if (InitRL(it->second)) {
-                    all_sensors_ready_ = true;
-                    rl_.SetState(AresRL::State::RUNNING);
-                    printf("[RL] RUNNING (%s)\n", it->second.c_str());
-                } else {
-                    printf("[RL] Reinit FAILED\n");
-                }
-            }
             return;
         }
 
@@ -247,8 +251,9 @@ private:
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
+    // Empty policy name → start in STOP state, load on key press
     auto node = std::make_shared<ARSNode>(
-        argc > 1 ? argv[1] : "ares_himloco/himloco");
+        argc > 1 ? argv[1] : "");
     rclcpp::executors::MultiThreadedExecutor exec;
     exec.add_node(node);
     exec.spin();
