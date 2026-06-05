@@ -56,7 +56,7 @@ ares_himloco/himloco:
   # Change this when switching to a network with different joint ordering
   topic_to_driver: [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]
 
-  # Recording (50Hz, same data as terminal print)
+  # Recording (press L to start/stop)
   record:
     enabled: false
-    filepath: "/tmp/ares_record.csv"
+    filepath: "records"

@@ -50,8 +50,11 @@ public:
 
     bool        IsRecordEnabled() const { return record_enabled_; }
     const std::string& GetRecordFilepath() const { return record_filepath_; }
+    void        ToggleRecording();
 
 private:
+    void OpenRecordFile();
+    void WriteCsvHeader();
     std::vector<float> Forward(const Observations<float>& obs);
     std::vector<float> ComputeObservation(const Observations<float>& obs);
     std::vector<float> ComputeTargetPositions(const std::vector<float>& actions) const;
@@ -95,8 +98,9 @@ private:
 
     bool   record_enabled_{false};
     std::string record_filepath_;
+    std::string record_dir_{"records"};
+    int    record_step_{0};
     std::ofstream csv_file_;
-    double record_time_{0.0};
 
     std::vector<float> snap_joint_pos_, snap_joint_vel_, snap_joint_torque_;
 };

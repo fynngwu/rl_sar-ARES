@@ -155,6 +155,10 @@ private:
             return;
         }
 
+        // Recording toggle
+        if ((key == 'L' || key == 'l') && rl_.IsInitialized())
+            rl_.ToggleRecording();
+
         if (!all_sensors_ready_) return;
         if (rl_.GetState() == AresRL::State::STOPPED) return;
 
