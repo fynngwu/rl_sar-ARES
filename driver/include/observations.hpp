@@ -75,6 +75,9 @@ public:
 
     void Update() override;
 
+    // Returns true if IMU serial port is open and receiving data
+    bool IsConnected() const { return fd >= 0; }
+
     // Raw sensor accessors (used by mpc_cpp)
     float const* get_quaternion() const { return quaternion; }  // [w,x,y,z]
     float const* get_gyro()       const { return gyro; }        // [x,y,z] rad/s (WIT frame)

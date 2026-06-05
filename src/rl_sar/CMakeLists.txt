@@ -237,6 +237,15 @@ if(DOG_DRIVER_LIB)
             <geometry_msgs/msg/twist.hpp>
             <yaml-cpp/yaml.h>
         )
+
+        # IMU direct hardware test (no ROS2 dependency)
+        add_executable(test_imu_direct test/test_imu_direct.cpp)
+        target_link_libraries(test_imu_direct
+            ares_driver_core
+            dog_driver
+            ${YAML_CPP_LIBRARIES}
+            Threads::Threads
+        )
     endif()
 endif()
 
