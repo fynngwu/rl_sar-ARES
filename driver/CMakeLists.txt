@@ -26,3 +26,18 @@ target_link_libraries(dog_driver
 )
 
 target_compile_options(dog_driver PRIVATE -Wall -Wextra -fPIC)
+
+add_executable(collect_pace_data
+    src/collect_pace_data.cpp
+)
+
+target_include_directories(collect_pace_data PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(collect_pace_data
+    dog_driver
+    Threads::Threads
+)
+
+target_compile_options(collect_pace_data PRIVATE -Wall -Wextra)
