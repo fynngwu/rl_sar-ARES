@@ -54,9 +54,9 @@ constexpr std::array<float, DogDriver::NUM_JOINTS> kDefaultDirection = {
 };
 
 constexpr std::array<float, DogDriver::NUM_JOINTS> kDefaultAmplitude = {
-    0.10f, 0.10f, 0.10f, 0.10f,
-    0.18f, 0.18f, 0.18f, 0.18f,
-    0.22f, 0.22f, 0.22f, 0.22f,
+    0.20f, 0.20f, 0.20f, 0.20f,
+    0.30f, 0.30f, 0.30f, 0.30f,
+    0.40f, 0.40f, 0.40f, 0.40f,
 };
 
 constexpr float kSafetyMargin = 0.05f;
