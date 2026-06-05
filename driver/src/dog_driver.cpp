@@ -64,7 +64,7 @@ DogDriver::DogDriver() {
     }
 
     imu_ = std::make_unique<IMUComponent>(kIMUDev);
-    imu_connected_ = true;
+    imu_connected_ = imu_->IsConnected();
 
     int online_count = 0;
     for (int i = 0; i < NUM_JOINTS; ++i) {
