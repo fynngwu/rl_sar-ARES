@@ -56,3 +56,8 @@ dogv2_cts/cts:
   # Topic order (CTS policy): FL FR RL RR, by leg
   # Driver internal order: HipA(LF,LR,RF,RR) HipF(LF,LR,RF,RR) Knee(LF,LR,RF,RR)
   topic_to_driver: [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
+
+  # Recording (press L to start/stop)
+  record:
+    enabled: false
+    filepath: "records"

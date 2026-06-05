@@ -24,9 +24,11 @@ dream_waq/dream_waq:
   gravity_vec_scale: 1.0
 
   # PD gains (driver reads these at init)
-  fixed_kp: 20
-  fixed_kd: 1.0
-  torque_limits: 17.0
+  fixed_kp: 12
+  fixed_kd: 0.5
+  torque_limits: [17.0, 17.0, 17.0, 17.0,
+                  17.0, 17.0, 17.0, 17.0,
+                  25.0, 25.0, 25.0, 25.0]
 
   # Position limits (driver order: HipA LF/LR/RF/RR, HipF LF/LR/RF/RR, Knee LF/LR/RF/RR)
   position_limits:
@@ -57,7 +59,7 @@ dream_waq/dream_waq:
   # Driver internal order: HipA(LF,LR,RF,RR) HipF(LF,LR,RF,RR) Knee(LF,LR,RF,RR)
   topic_to_driver: [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
 
-  # Recording (50Hz, same data as terminal print)
+  # Recording (press L to start/stop)
   record:
     enabled: false
-    filepath: "/tmp/ares_record.csv"
+    filepath: "records"

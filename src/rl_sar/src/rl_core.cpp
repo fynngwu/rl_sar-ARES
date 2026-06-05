@@ -1,6 +1,11 @@
 #include "rl_core.hpp"
 #include <yaml-cpp/yaml.h>
 
+#include <ctime>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
+
 static constexpr const char* kJointNames[12] = {
     "FL_HipA", "RL_HipA", "FR_HipA", "RR_HipA",
     "FL_HipF", "RL_HipF", "FR_HipF", "RR_HipF",
@@ -100,21 +105,12 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
         }
 
         // CSV data recording
-        if (rc["record"] && rc["record"]["enabled"]) {
-            if (csv_file_.is_open()) csv_file_.close();
-            std::string filepath = rc["record"]["filepath"].as<std::string>();
-            csv_file_.open(filepath, std::ios::out | std::ios::trunc);
-            if (csv_file_.is_open()) {
-                record_enabled_ = true;
-                record_filepath_ = filepath;
-                csv_file_ << "timestamp";
-                for (int i = 0; i < 12; ++i)
-                    csv_file_ << "," << kJointNames[i] << "_pos,"
-                              << kJointNames[i] << "_vel,"
-                              << kJointNames[i] << "_torque,"
-                              << kJointNames[i] << "_target";
-                csv_file_ << "\n";
-            }
+        record_dir_ = "records";
+        if (rc["record"] && rc["record"]["filepath"])
+            record_dir_ = rc["record"]["filepath"].as<std::string>();
+
+        if (rc["record"] && rc["record"]["enabled"] && rc["record"]["enabled"].as<bool>()) {
+            OpenRecordFile();
         } else {
             record_enabled_ = false;
         }
@@ -215,14 +211,14 @@ void AresRL::RunModel(const float imu_gyro[3], const float imu_gravity[3],
     inference_count_++;
 
     if (record_enabled_ && csv_file_.is_open()) {
-        csv_file_ << record_time_;
+        csv_file_ << record_step_;
         for (int i = 0; i < num_of_dofs_; ++i)
             csv_file_ << "," << snap_joint_pos_[i]
                       << "," << snap_joint_vel_[i]
                       << "," << snap_joint_torque_[i]
                       << "," << latest_target_pos_[i];
         csv_file_ << "\n";
-        record_time_ += dt_ * decimation_;
+        record_step_++;
     }
 
     PrintStatus();
@@ -381,6 +377,51 @@ std::string AresRL::FormatStringVector(const std::vector<std::string>& values) c
     }
     oss << "]";
     return oss.str();
+}
+
+void AresRL::WriteCsvHeader()
+{
+    csv_file_ << "step";
+    for (int i = 0; i < num_of_dofs_; ++i)
+        csv_file_ << "," << kJointNames[i] << "_pos,"
+                  << kJointNames[i] << "_vel,"
+                  << kJointNames[i] << "_torque,"
+                  << kJointNames[i] << "_target";
+    csv_file_ << "\n";
+}
+
+void AresRL::OpenRecordFile()
+{
+    if (csv_file_.is_open()) csv_file_.close();
+
+    auto now = std::chrono::system_clock::now();
+    auto tt = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << record_dir_ << "/record_" << std::put_time(std::localtime(&tt), "%Y%m%d_%H%M%S") << ".csv";
+
+    auto dir = std::filesystem::path(record_dir_);
+    if (!std::filesystem::exists(dir))
+        std::filesystem::create_directory(dir);
+
+    csv_file_.open(ss.str());
+    if (csv_file_.is_open()) {
+        record_enabled_ = true;
+        record_filepath_ = ss.str();
+        record_step_ = 0;
+        WriteCsvHeader();
+        printf("[RL] Recording started: %s\n", record_filepath_.c_str());
+    }
+}
+
+void AresRL::ToggleRecording()
+{
+    if (record_enabled_ && csv_file_.is_open()) {
+        csv_file_.close();
+        record_enabled_ = false;
+        printf("[RL] Recording stopped (%d steps): %s\n", record_step_, record_filepath_.c_str());
+    } else {
+        OpenRecordFile();
+    }
 }
 
 void AresRL::PrintStatus()
