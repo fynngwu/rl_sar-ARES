@@ -48,9 +48,9 @@ constexpr std::array<float, DogDriver::NUM_JOINTS> kDefaultBias = {
 };
 
 constexpr std::array<float, DogDriver::NUM_JOINTS> kDefaultDirection = {
-     1.0f, -1.0f,  1.0f, -1.0f,
      1.0f,  1.0f, -1.0f, -1.0f,
-    -1.0f, -1.0f,  1.0f,  1.0f,
+     1.0f, -1.0f,  1.0f, -1.0f,
+    -1.0f,  1.0f, -1.0f,  1.0f,
 };
 
 constexpr std::array<float, DogDriver::NUM_JOINTS> kDefaultAmplitude = {
