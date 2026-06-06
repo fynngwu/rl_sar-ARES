@@ -44,6 +44,28 @@ static void robstride_can_rx_callback_wrapper(const struct device *dev, struct c
     }
 }
 
+static void HandleFault(uint8_t motor_id, uint16_t fault) {
+    if (fault == 0) return;
+
+    std::cout << "[Robstride] Motor " << static_cast<int>(motor_id)
+              << " fault bits: 0x" << std::hex << fault << std::dec;
+    for (int bit = 0; bit < 16; ++bit) {
+        if (fault & (1u << bit)) {
+            std::cout << " bit" << bit;
+            switch (bit) {
+            case 0: std::cout << "(undervoltage)"; break;
+            case 1: std::cout << "(phase-current)"; break;
+            case 2: std::cout << "(over-temperature)"; break;
+            case 3: std::cout << "(magnetic-encoder)"; break;
+            case 4: std::cout << "(stall-overload)"; break;
+            case 5: std::cout << "(uncalibrated)"; break;
+            default: break;
+            }
+        }
+    }
+    std::cout << std::endl;
+}
+
 void RobstrideController::HandleCANMessage(const struct device *dev, struct can_frame *frame) {
     (void)dev;
     // std::cout << "CAN RX: ID=" << frame->can_id << " DLC=" << (int)frame->can_dlc << std::endl;
@@ -70,6 +92,7 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
                 motor.last_online_time = std::chrono::steady_clock::now();
                 motor.error_code = reserved & 0x3F;
                 motor.pattern = (reserved >> 6) & 0x03;
+                HandleFault(motor.motor_id, motor.error_code);
                 
                 // Parse Data
                 if (frame->len >= 8) {
