@@ -9,6 +9,7 @@
 #define COMM_ENABLE         0x03
 #define COMM_STOP           0x04
 #define COMM_SET_ZERO       0x06
+#define COMM_ERROR_FEEDBACK 0x15
 #define COMM_REPORT         0x18
 
 #define P_MAX               12.57f
@@ -66,6 +67,50 @@ static void HandleFault(uint8_t motor_id, uint16_t fault) {
     std::cout << std::endl;
 }
 
+static void HandleErrorFeedback(uint8_t motor_id, const struct can_frame *frame) {
+    if (frame->len < 8) return;
+
+    uint32_t fault = static_cast<uint32_t>(frame->data[0]) |
+                     (static_cast<uint32_t>(frame->data[1]) << 8) |
+                     (static_cast<uint32_t>(frame->data[2]) << 16) |
+                     (static_cast<uint32_t>(frame->data[3]) << 24);
+    uint32_t warning = static_cast<uint32_t>(frame->data[4]) |
+                       (static_cast<uint32_t>(frame->data[5]) << 8) |
+                       (static_cast<uint32_t>(frame->data[6]) << 16) |
+                       (static_cast<uint32_t>(frame->data[7]) << 24);
+
+    if (fault == 0 && warning == 0) return;
+
+    std::cout << "[Robstride] Motor " << static_cast<int>(motor_id)
+              << " error feedback fault: 0x" << std::hex << fault
+              << " warning: 0x" << warning << std::dec;
+
+    for (int bit = 0; bit < 32; ++bit) {
+        if (fault & (1u << bit)) {
+            std::cout << " fault_bit" << bit;
+            switch (bit) {
+            case 0: std::cout << "(motor-over-temperature)"; break;
+            case 1: std::cout << "(driver-chip)"; break;
+            case 2: std::cout << "(undervoltage)"; break;
+            case 3: std::cout << "(overvoltage)"; break;
+            case 4: std::cout << "(phase-b-current)"; break;
+            case 5: std::cout << "(phase-c-current)"; break;
+            case 7: std::cout << "(encoder-not-calibrated)"; break;
+            case 8: std::cout << "(hardware-recognition)"; break;
+            case 9: std::cout << "(position-initialization)"; break;
+            case 14: std::cout << "(stall-overload)"; break;
+            case 16: std::cout << "(phase-a-current)"; break;
+            default: break;
+            }
+        }
+    }
+
+    if (warning & 0x01) {
+        std::cout << " warning_bit0(motor-over-temperature-warning)";
+    }
+    std::cout << std::endl;
+}
+
 void RobstrideController::HandleCANMessage(const struct device *dev, struct can_frame *frame) {
     (void)dev;
     // std::cout << "CAN RX: ID=" << frame->can_id << " DLC=" << (int)frame->can_dlc << std::endl;
@@ -111,6 +156,16 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
                     motor.state.velocity = uint16_to_float(raw_vel, -v_max, v_max, 16);
                     motor.state.torque = uint16_to_float(raw_tor, -t_max, t_max, 16);
                 }
+                break;
+            }
+        }
+    } else if (msg_type == COMM_ERROR_FEEDBACK) {
+        std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+        for (auto& motor : motor_data) {
+            if (motor.motor_id == motor_id) {
+                motor.online = true;
+                motor.last_online_time = std::chrono::steady_clock::now();
+                HandleErrorFeedback(motor.motor_id, frame);
                 break;
             }
         }
