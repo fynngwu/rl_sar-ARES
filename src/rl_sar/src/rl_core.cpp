@@ -69,7 +69,6 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
         };
         clip_actions_upper_ = read_floats("clip_actions_upper");
         clip_actions_lower_ = read_floats("clip_actions_lower");
-        action_scale_       = read_floats("action_scale");
         commands_scale_     = read_floats("commands_scale");
         default_dof_pos_    = read_floats("default_dof_pos");
 
@@ -93,6 +92,7 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
         current_kp_            = read_scalar_or_list(rc["fixed_kp"]);
         current_kd_            = read_scalar_or_list(rc["fixed_kd"]);
         current_torque_limits_ = read_scalar_or_list(rc["torque_limits"]);
+        action_scale_          = read_scalar_or_list(rc["action_scale"]);
 
         // Load position limits from YAML
         position_limits_.clear();

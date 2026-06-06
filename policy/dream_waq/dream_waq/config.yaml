@@ -15,7 +15,7 @@ dream_waq/dream_waq:
   dt: 0.005
   decimation: 4
   num_of_dofs: 12
-  action_scale: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]
+  action_scale: 0.18
   commands_scale: [2.0, 2.0, 0.25]
   lin_vel_scale: 2.0
   ang_vel_scale: 0.25
@@ -24,8 +24,8 @@ dream_waq/dream_waq:
   gravity_vec_scale: 1.0
 
   # PD gains (driver reads these at init)
-  fixed_kp: 12
-  fixed_kd: 0.5
+  fixed_kp: 24
+  fixed_kd: 0.7
   torque_limits: [17.0, 17.0, 17.0, 17.0,
                   17.0, 17.0, 17.0, 17.0,
                   25.0, 25.0, 25.0, 25.0]
