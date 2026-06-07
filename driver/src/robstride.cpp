@@ -45,8 +45,8 @@ static void robstride_can_rx_callback_wrapper(const struct device *dev, struct c
     }
 }
 
-static void HandleFault(uint8_t motor_id, uint16_t fault) {
-    if (fault == 0) return;
+static bool HandleFault(uint8_t motor_id, uint16_t fault) {
+    if (fault == 0) return false;
 
     std::cout << "[Robstride] Motor " << static_cast<int>(motor_id)
               << " fault bits: 0x" << std::hex << fault << std::dec;
@@ -65,10 +65,11 @@ static void HandleFault(uint8_t motor_id, uint16_t fault) {
         }
     }
     std::cout << std::endl;
+    return (fault & (1u << 1)) != 0;
 }
 
-static void HandleErrorFeedback(uint8_t motor_id, const struct can_frame *frame) {
-    if (frame->len < 8) return;
+static bool HandleErrorFeedback(uint8_t motor_id, const struct can_frame *frame) {
+    if (frame->len < 8) return false;
 
     uint32_t fault = static_cast<uint32_t>(frame->data[0]) |
                      (static_cast<uint32_t>(frame->data[1]) << 8) |
@@ -79,7 +80,7 @@ static void HandleErrorFeedback(uint8_t motor_id, const struct can_frame *frame)
                        (static_cast<uint32_t>(frame->data[6]) << 16) |
                        (static_cast<uint32_t>(frame->data[7]) << 24);
 
-    if (fault == 0 && warning == 0) return;
+    if (fault == 0 && warning == 0) return false;
 
     std::cout << "[Robstride] Motor " << static_cast<int>(motor_id)
               << " error feedback fault: 0x" << std::hex << fault
@@ -109,6 +110,7 @@ static void HandleErrorFeedback(uint8_t motor_id, const struct can_frame *frame)
         std::cout << " warning_bit0(motor-over-temperature-warning)";
     }
     std::cout << std::endl;
+    return (fault & ((1u << 4) | (1u << 5) | (1u << 16))) != 0;
 }
 
 void RobstrideController::HandleCANMessage(const struct device *dev, struct can_frame *frame) {
@@ -131,13 +133,20 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
 
     if (msg_type == COMM_FEEDBACK || msg_type == COMM_REPORT) {
         std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
-        for (auto& motor : motor_data) {
+        for (size_t i = 0; i < motor_data.size(); ++i) {
+            auto& motor = motor_data[i];
             if (motor.motor_id == motor_id) {
                 motor.online = true;
                 motor.last_online_time = std::chrono::steady_clock::now();
                 motor.error_code = reserved & 0x3F;
                 motor.pattern = (reserved >> 6) & 0x03;
-                HandleFault(motor.motor_id, motor.error_code);
+                bool phase_current_fault = HandleFault(motor.motor_id, motor.error_code);
+                if (phase_current_fault) {
+                    std::cout << "[Robstride] Motor " << motor.motor_id
+                              << " phase-current fault, clear and re-enable" << std::endl;
+                    ClearMotor(i);
+                    EnableMotor(i);
+                }
                 
                 // Parse Data
                 if (frame->len >= 8) {
@@ -161,11 +170,18 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
         }
     } else if (msg_type == COMM_ERROR_FEEDBACK) {
         std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
-        for (auto& motor : motor_data) {
+        for (size_t i = 0; i < motor_data.size(); ++i) {
+            auto& motor = motor_data[i];
             if (motor.motor_id == motor_id) {
                 motor.online = true;
                 motor.last_online_time = std::chrono::steady_clock::now();
-                HandleErrorFeedback(motor.motor_id, frame);
+                bool phase_current_fault = HandleErrorFeedback(motor.motor_id, frame);
+                if (phase_current_fault) {
+                    std::cout << "[Robstride] Motor " << motor.motor_id
+                              << " phase-current fault, clear and re-enable" << std::endl;
+                    ClearMotor(i);
+                    EnableMotor(i);
+                }
                 break;
             }
         }
