@@ -53,6 +53,10 @@ dream_waq/dream_waq:
 
   # Driver config
   gamepad_scale: 2.0
+  gamepad_limits:
+    linear_x: [-2.0, 2.0]
+    linear_y: [-2.0, 2.0]
+    angular_z: [-0.5, 0.5]
 
   # Joint mapping: topic_to_driver[topic_idx] = driver_idx
   # Topic order (model is LeggedGym default FL FR RL RR): FL FR RL RR, by leg

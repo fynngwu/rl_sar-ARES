@@ -228,9 +228,10 @@ private:
     void XboxVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
         Lock lock(data_mutex_);
-        commands_buffer_[0] = msg->linear.x;
-        commands_buffer_[1] = msg->linear.y;
-        commands_buffer_[2] = msg->angular.z;
+        const auto& limits = rl_.GetGamepadLimits();
+        commands_buffer_[0] = std::clamp(static_cast<float>(msg->linear.x), limits[0].first, limits[0].second);
+        commands_buffer_[1] = std::clamp(static_cast<float>(msg->linear.y), limits[1].first, limits[1].second);
+        commands_buffer_[2] = std::clamp(static_cast<float>(msg->angular.z), limits[2].first, limits[2].second);
     }
 
     AresRL rl_;

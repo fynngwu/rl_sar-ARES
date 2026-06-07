@@ -31,6 +31,7 @@ public:
     const std::vector<float>& GetKd() const { return current_kd_; }
     const std::vector<float>& GetTorqueLimits() const { return current_torque_limits_; }
     const std::vector<std::pair<float, float>>& GetPositionLimits() const { return position_limits_; }
+    const std::array<std::pair<float, float>, 3>& GetGamepadLimits() const { return gamepad_limits_; }
     const std::array<int, 12>& GetTopicToDriver() const { return topic_to_driver_; }
     const std::array<int, 12>& GetDriverToTopic() const { return driver_to_topic_; }
 
@@ -86,6 +87,7 @@ private:
     std::vector<float> current_kp_, current_kd_, current_torque_limits_;
 
     std::vector<std::pair<float, float>> position_limits_;
+    std::array<std::pair<float, float>, 3> gamepad_limits_{};
 
     std::array<int, 12> topic_to_driver_{}, driver_to_topic_{};
 

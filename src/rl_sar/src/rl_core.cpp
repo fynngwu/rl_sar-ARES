@@ -104,6 +104,17 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
             }
         }
 
+        // Load gamepad limits from YAML (required)
+        if (rc["gamepad_limits"]) {
+            auto gl = rc["gamepad_limits"];
+            gamepad_limits_[0] = {gl["linear_x"][0].as<float>(), gl["linear_x"][1].as<float>()};
+            gamepad_limits_[1] = {gl["linear_y"][0].as<float>(), gl["linear_y"][1].as<float>()};
+            gamepad_limits_[2] = {gl["angular_z"][0].as<float>(), gl["angular_z"][1].as<float>()};
+        } else {
+            fprintf(stderr, "[RL] ERROR: gamepad_limits not found in config\n");
+            return false;
+        }
+
         // CSV data recording
         record_dir_ = "records";
         if (rc["record"] && rc["record"]["filepath"])
