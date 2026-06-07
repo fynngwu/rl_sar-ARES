@@ -51,6 +51,10 @@ dogv2_cts/cts:
 
   # Driver config
   gamepad_scale: 1.0
+  gamepad_limits:
+    linear_x: [-1.0, 1.0]
+    linear_y: [-1.0, 1.0]
+    angular_z: [-0.5, 0.5]
 
   # Joint mapping: topic_to_driver[topic_idx] = driver_idx
   # Topic order (CTS policy): FL FR RL RR, by leg

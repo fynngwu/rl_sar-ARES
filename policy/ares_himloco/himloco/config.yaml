@@ -49,6 +49,10 @@ ares_himloco/himloco:
 
   # Driver config
   gamepad_scale: 2.0
+  gamepad_limits:
+    linear_x: [-2.0, 2.0]
+    linear_y: [-0.6, 0.6]
+    angular_z: [-0.4, 0.4]
 
   # Joint mapping: topic_to_driver[topic_idx] = driver_idx
   # Topic order (URDF): FL RL FR RR, by leg
