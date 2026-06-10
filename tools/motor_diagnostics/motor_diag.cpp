@@ -31,7 +31,8 @@ constexpr float DAMPING_KP = 0.0f;
 constexpr float DAMPING_KD = 10.0f;
 constexpr float KNEE_GEAR_RATIO = 1.667f;
 constexpr float PI = 3.14159265358979323846f;
-constexpr const char* DIAG_VERSION = "20260611_online_guard";
+constexpr double MAX_CONTINUOUS_OFFLINE_SEC = 0.25;
+constexpr const char* DIAG_VERSION = "20260611_online_stats";
 
 constexpr std::array<int, NUM_JOINTS> kMotorIds = {
     1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15
@@ -399,6 +400,60 @@ void WriteCsvRow(std::ofstream& out, MotorContext& ctx, const std::string& test,
         << static_cast<int>(err.pattern) << "\n";
 }
 
+struct WaveStats {
+    int samples = 0;
+    int offline_samples = 0;
+    int offline_events = 0;
+    int error_samples = 0;
+    bool was_online = true;
+    double offline_start_sec = -1.0;
+    double max_offline_sec = 0.0;
+    float max_abs_tracking_error = 0.0f;
+    float max_abs_torque = 0.0f;
+};
+
+void UpdateWaveStats(WaveStats& stats, bool online, uint8_t error_code, uint8_t pattern,
+                     float desired, float measured, float torque, double t_sec) {
+    stats.samples++;
+    if (!online) {
+        stats.offline_samples++;
+        if (stats.was_online) {
+            stats.offline_events++;
+            stats.offline_start_sec = t_sec;
+        }
+        if (stats.offline_start_sec >= 0.0) {
+            stats.max_offline_sec = std::max(stats.max_offline_sec, t_sec - stats.offline_start_sec);
+        }
+    } else if (!stats.was_online) {
+        if (stats.offline_start_sec >= 0.0) {
+            stats.max_offline_sec = std::max(stats.max_offline_sec, t_sec - stats.offline_start_sec);
+        }
+        stats.offline_start_sec = -1.0;
+    }
+
+    if (error_code != 0 || pattern != 0) stats.error_samples++;
+    stats.max_abs_tracking_error = std::max(stats.max_abs_tracking_error, std::abs(desired - measured));
+    stats.max_abs_torque = std::max(stats.max_abs_torque, std::abs(torque));
+    stats.was_online = online;
+}
+
+double CurrentOfflineDuration(const WaveStats& stats, double t_sec) {
+    if (stats.offline_start_sec < 0.0) return 0.0;
+    return t_sec - stats.offline_start_sec;
+}
+
+void PrintWaveSummary(const std::string& label, int joint, const WaveStats& stats) {
+    std::cout << label << " summary: " << kJointNames[joint]
+              << " samples=" << stats.samples
+              << " offline_events=" << stats.offline_events
+              << " offline_samples=" << stats.offline_samples
+              << " max_offline_sec=" << std::fixed << std::setprecision(3) << stats.max_offline_sec
+              << " error_samples=" << stats.error_samples
+              << " max_abs_tracking_error=" << std::setprecision(5) << stats.max_abs_tracking_error
+              << " max_abs_torque=" << std::setprecision(4) << stats.max_abs_torque
+              << std::endl;
+}
+
 int CmdStatus(const Options& opt) {
     auto joints = AllJointsIfEmpty(opt.joints);
     MotorContext ctx;
@@ -499,6 +554,7 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
                   << center << " amp=" << opt.amp << " kp=" << opt.kp
                   << " kd=" << opt.kd << std::endl;
 
+        WaveStats stats;
         auto start = Clock::now();
         const auto tick = std::chrono::duration<double>(1.0 / opt.loop_hz);
         auto next_tick = Clock::now();
@@ -513,25 +569,36 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
             } else {
                 phase = 2.0 * PI * opt.freq * t;
             }
-            if (!ctx.ctrl()->IsMotorOnline(ctx.motor_idx(joint))) {
+            auto cur = ctx.ctrl()->GetMotorState(ctx.motor_idx(joint));
+            auto err = ctx.ctrl()->GetMotorError(ctx.motor_idx(joint));
+            bool online = ctx.ctrl()->IsMotorOnline(ctx.motor_idx(joint));
+            float desired = ClampJointPos(joint, center + opt.amp * static_cast<float>(std::sin(phase)));
+            float measured = MotorToJointPos(joint, cur.position);
+            float torque = MotorToJointTorque(joint, cur.torque);
+            UpdateWaveStats(stats, online, err.error_code, err.pattern, desired, measured, torque, t);
+
+            if (!online && CurrentOfflineDuration(stats, t) > MAX_CONTINUOUS_OFFLINE_SEC) {
                 std::cerr << "ERROR: " << kJointNames[joint]
                           << " motor_id=" << kMotorIds[joint]
-                          << " went offline during " << label
+                          << " stayed offline for "
+                          << std::fixed << std::setprecision(3)
+                          << CurrentOfflineDuration(stats, t) << "s during " << label
                           << "; stopping commands." << std::endl;
                 ctx.ctrl()->DisableMotor(ctx.motor_idx(joint));
                 ctx.ctrl()->DisableAutoReport(ctx.motor_idx(joint));
+                PrintWaveSummary(label, joint, stats);
                 return 1;
             }
             if (Clock::now() >= next_report_refresh) {
                 ctx.ctrl()->EnableAutoReport(ctx.motor_idx(joint));
                 next_report_refresh += std::chrono::milliseconds(500);
             }
-            float desired = ClampJointPos(joint, center + opt.amp * static_cast<float>(std::sin(phase)));
             ctx.ctrl()->SendMITCommand(ctx.motor_idx(joint), JointToMotorPos(joint, desired));
             WriteCsvRow(out, ctx, label, joint, t, desired);
             next_tick += std::chrono::duration_cast<Clock::duration>(tick);
             std::this_thread::sleep_until(next_tick);
         }
+        PrintWaveSummary(label, joint, stats);
         ctx.ctrl()->DisableMotor(ctx.motor_idx(joint));
         ctx.ctrl()->DisableAutoReport(ctx.motor_idx(joint));
         if (!g_running) break;
