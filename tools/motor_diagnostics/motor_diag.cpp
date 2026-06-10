@@ -31,6 +31,7 @@ constexpr float DAMPING_KP = 0.0f;
 constexpr float DAMPING_KD = 10.0f;
 constexpr float KNEE_GEAR_RATIO = 1.667f;
 constexpr float PI = 3.14159265358979323846f;
+constexpr const char* DIAG_VERSION = "20260611_online_guard";
 
 constexpr std::array<int, NUM_JOINTS> kMotorIds = {
     1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15
@@ -135,6 +136,7 @@ struct Options {
 
 void Usage(const char* prog) {
     std::cout
+        << "motor_diag " << DIAG_VERSION << "\n"
         << "Usage: " << prog << " <command> [options]\n\n"
         << "Commands:\n"
         << "  status                         Print online/state/fault table\n"
@@ -479,6 +481,7 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
     for (const auto& test : tests) joints.push_back(test.second);
     MotorContext ctx;
     ctx.Init(joints);
+    std::cout << "motor_diag " << DIAG_VERSION << std::endl;
     auto out = OpenLog(opt, chirp ? "chirp" : "single", ".csv");
     WriteCsvHeader(out);
 
@@ -499,6 +502,7 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
         auto start = Clock::now();
         const auto tick = std::chrono::duration<double>(1.0 / opt.loop_hz);
         auto next_tick = Clock::now();
+        auto next_report_refresh = Clock::now() + std::chrono::milliseconds(500);
         while (g_running) {
             double t = std::chrono::duration<double>(Clock::now() - start).count();
             if (t >= opt.duration) break;
@@ -517,6 +521,10 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
                 ctx.ctrl()->DisableMotor(ctx.motor_idx(joint));
                 ctx.ctrl()->DisableAutoReport(ctx.motor_idx(joint));
                 return 1;
+            }
+            if (Clock::now() >= next_report_refresh) {
+                ctx.ctrl()->EnableAutoReport(ctx.motor_idx(joint));
+                next_report_refresh += std::chrono::milliseconds(500);
             }
             float desired = ClampJointPos(joint, center + opt.amp * static_cast<float>(std::sin(phase)));
             ctx.ctrl()->SendMITCommand(ctx.motor_idx(joint), JointToMotorPos(joint, desired));
