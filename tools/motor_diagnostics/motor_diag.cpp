@@ -446,11 +446,32 @@ int CmdFaultLog(const Options& opt) {
     return g_running ? 0 : 2;
 }
 
-void ConfigureJoint(MotorContext& ctx, int joint, const Options& opt) {
+bool WaitForOnline(MotorContext& ctx, int joint, std::chrono::milliseconds timeout) {
+    auto deadline = Clock::now() + timeout;
+    while (Clock::now() < deadline) {
+        if (ctx.ctrl()->IsMotorOnline(ctx.motor_idx(joint))) return true;
+        ctx.ctrl()->EnableAutoReport(ctx.motor_idx(joint));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return ctx.ctrl()->IsMotorOnline(ctx.motor_idx(joint));
+}
+
+bool ConfigureJoint(MotorContext& ctx, int joint, const Options& opt) {
     ctx.ctrl()->SetMITParams(ctx.motor_idx(joint), MakeParams(opt));
     ctx.ctrl()->EnableMotor(ctx.motor_idx(joint));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     ctx.ctrl()->EnableAutoReport(ctx.motor_idx(joint));
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ctx.ctrl()->EnableAutoReport(ctx.motor_idx(joint));
+    if (!WaitForOnline(ctx, joint, std::chrono::milliseconds(800))) {
+        std::cerr << "ERROR: " << kJointNames[joint]
+                  << " motor_id=" << kMotorIds[joint]
+                  << " on " << kCanNames[CanIndex(joint)]
+                  << " is offline after enable/auto-report; aborting test."
+                  << std::endl;
+        return false;
+    }
+    return true;
 }
 
 int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int>>& tests, bool chirp) {
@@ -464,7 +485,11 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
     for (const auto& test : tests) {
         const std::string& label = test.first;
         int joint = test.second;
-        ConfigureJoint(ctx, joint, opt);
+        if (!ConfigureJoint(ctx, joint, opt)) {
+            ctx.ctrl()->DisableMotor(ctx.motor_idx(joint));
+            ctx.ctrl()->DisableAutoReport(ctx.motor_idx(joint));
+            return 1;
+        }
         auto st = ctx.ctrl()->GetMotorState(ctx.motor_idx(joint));
         float center = ClampJointPos(joint, MotorToJointPos(joint, st.position));
         std::cout << label << ": " << kJointNames[joint] << " center="
@@ -483,6 +508,15 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
                     ((opt.max_freq - opt.min_freq) / (2.0 * opt.duration)) * t * t);
             } else {
                 phase = 2.0 * PI * opt.freq * t;
+            }
+            if (!ctx.ctrl()->IsMotorOnline(ctx.motor_idx(joint))) {
+                std::cerr << "ERROR: " << kJointNames[joint]
+                          << " motor_id=" << kMotorIds[joint]
+                          << " went offline during " << label
+                          << "; stopping commands." << std::endl;
+                ctx.ctrl()->DisableMotor(ctx.motor_idx(joint));
+                ctx.ctrl()->DisableAutoReport(ctx.motor_idx(joint));
+                return 1;
             }
             float desired = ClampJointPos(joint, center + opt.amp * static_cast<float>(std::sin(phase)));
             ctx.ctrl()->SendMITCommand(ctx.motor_idx(joint), JointToMotorPos(joint, desired));
