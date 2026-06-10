@@ -41,3 +41,18 @@ target_link_libraries(collect_pace_data
 )
 
 target_compile_options(collect_pace_data PRIVATE -Wall -Wextra)
+
+add_executable(motor_diag
+    ../tools/motor_diagnostics/motor_diag.cpp
+)
+
+target_include_directories(motor_diag PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(motor_diag
+    dog_driver
+    Threads::Threads
+)
+
+target_compile_options(motor_diag PRIVATE -Wall -Wextra)
