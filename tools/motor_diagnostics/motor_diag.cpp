@@ -405,6 +405,7 @@ struct WaveStats {
     int offline_samples = 0;
     int offline_events = 0;
     int error_samples = 0;
+    int pattern_samples = 0;
     uint8_t error_or = 0;
     uint8_t pattern_or = 0;
     uint8_t last_error = 0;
@@ -435,7 +436,8 @@ void UpdateWaveStats(WaveStats& stats, bool online, uint8_t error_code, uint8_t 
         stats.offline_start_sec = -1.0;
     }
 
-    if (error_code != 0 || pattern != 0) stats.error_samples++;
+    if (error_code != 0) stats.error_samples++;
+    if (pattern != 0) stats.pattern_samples++;
     stats.error_or |= error_code;
     stats.pattern_or |= pattern;
     stats.last_error = error_code;
@@ -457,6 +459,7 @@ void PrintWaveSummary(const std::string& label, int joint, const WaveStats& stat
               << " offline_samples=" << stats.offline_samples
               << " max_offline_sec=" << std::fixed << std::setprecision(3) << stats.max_offline_sec
               << " error_samples=" << stats.error_samples
+              << " pattern_samples=" << stats.pattern_samples
               << " error_or=" << Hex8(stats.error_or)
               << " pattern_or=" << static_cast<int>(stats.pattern_or)
               << " last_error=" << Hex8(stats.last_error)
