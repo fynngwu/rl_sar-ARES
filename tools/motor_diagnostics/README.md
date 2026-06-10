@@ -65,7 +65,15 @@ driver/build/motor_diag compare --joint 8 --ref 10 --amp 0.03 --freq 0.3 --kp 8 
 driver/build/motor_diag chirp --joint 8 --amp 0.03 --min-freq 0.1 --max-freq 1.5 --kp 8 --kd 0.4 --duration 20
 ```
 
-6. 常用安全命令：
+6. 单关节阶跃测试，用于更接近 RL 目标角突变的冲击排查：
+
+```bash
+driver/build/motor_diag step --joint 8 --amp 0.03 --freq 0.5 --kp 8 --kd 0.4 --duration 10
+```
+
+建议先用同参数测试疑似关节和健康参考关节，再逐步提高 `--amp`、`--freq` 或 `--kp`，每次只改变一个参数。
+
+7. 常用安全命令：
 
 ```bash
 driver/build/motor_diag damping --joint 8

@@ -144,6 +144,7 @@ void Usage(const char* prog) {
         << "  fault-log [--duration SEC]     Log state and current error code to JSONL\n"
         << "  single --joint J [...]         Low-risk single-joint sine test\n"
         << "  chirp --joint J [...]          Low-risk single-joint chirp test\n"
+        << "  step --joint J [...]           Single-joint square step test\n"
         << "  compare --joint BAD --ref GOOD Run the same sine test on two joints\n"
         << "  damping [--joint J]            Send damping command (kp=0,kd=10)\n"
         << "  disable [--joint J]            Disable selected motors\n"
@@ -152,7 +153,7 @@ void Usage(const char* prog) {
         << "  --joint, -j N      Joint index 0-11; repeat or omit for all where valid\n"
         << "  --ref N            Reference joint for compare\n"
         << "  --amp A            Joint-space sine/chirp amplitude rad (default 0.05)\n"
-        << "  --freq F           Single-test frequency Hz (default 0.5)\n"
+        << "  --freq F           Single/step frequency Hz (default 0.5)\n"
         << "  --min-freq F       Chirp start frequency Hz (default 0.1)\n"
         << "  --max-freq F       Chirp end frequency Hz (default 2.0)\n"
         << "  --kp K --kd D      MIT gains (default 10, 0.5)\n"
@@ -469,6 +470,37 @@ void PrintWaveSummary(const std::string& label, int joint, const WaveStats& stat
               << std::endl;
 }
 
+enum class ExcitationMode {
+    Sine,
+    Chirp,
+    Step,
+};
+
+float DesiredPosition(ExcitationMode mode, const Options& opt, int joint,
+                      float center, double t_sec) {
+    if (mode == ExcitationMode::Step) {
+        double half_period = 0.5 / opt.freq;
+        int phase_index = static_cast<int>(std::floor(t_sec / half_period));
+        float sign = (phase_index % 2 == 0) ? 1.0f : -1.0f;
+        return ClampJointPos(joint, center + sign * opt.amp);
+    }
+
+    double phase;
+    if (mode == ExcitationMode::Chirp) {
+        phase = 2.0 * PI * (opt.min_freq * t_sec +
+            ((opt.max_freq - opt.min_freq) / (2.0 * opt.duration)) * t_sec * t_sec);
+    } else {
+        phase = 2.0 * PI * opt.freq * t_sec;
+    }
+    return ClampJointPos(joint, center + opt.amp * static_cast<float>(std::sin(phase)));
+}
+
+std::string LogPrefix(ExcitationMode mode) {
+    if (mode == ExcitationMode::Chirp) return "chirp";
+    if (mode == ExcitationMode::Step) return "step";
+    return "single";
+}
+
 int CmdStatus(const Options& opt) {
     auto joints = AllJointsIfEmpty(opt.joints);
     MotorContext ctx;
@@ -546,13 +578,14 @@ bool ConfigureJoint(MotorContext& ctx, int joint, const Options& opt) {
     return true;
 }
 
-int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int>>& tests, bool chirp) {
+int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int>>& tests,
+                ExcitationMode mode) {
     std::vector<int> joints;
     for (const auto& test : tests) joints.push_back(test.second);
     MotorContext ctx;
     ctx.Init(joints);
     std::cout << "motor_diag " << DIAG_VERSION << std::endl;
-    auto out = OpenLog(opt, chirp ? "chirp" : "single", ".csv");
+    auto out = OpenLog(opt, LogPrefix(mode), ".csv");
     WriteCsvHeader(out);
 
     for (const auto& test : tests) {
@@ -577,17 +610,10 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
         while (g_running) {
             double t = std::chrono::duration<double>(Clock::now() - start).count();
             if (t >= opt.duration) break;
-            double phase;
-            if (chirp) {
-                phase = 2.0 * PI * (opt.min_freq * t +
-                    ((opt.max_freq - opt.min_freq) / (2.0 * opt.duration)) * t * t);
-            } else {
-                phase = 2.0 * PI * opt.freq * t;
-            }
             auto cur = ctx.ctrl()->GetMotorState(ctx.motor_idx(joint));
             auto err = ctx.ctrl()->GetMotorError(ctx.motor_idx(joint));
             bool online = ctx.ctrl()->IsMotorOnline(ctx.motor_idx(joint));
-            float desired = ClampJointPos(joint, center + opt.amp * static_cast<float>(std::sin(phase)));
+            float desired = DesiredPosition(mode, opt, joint, center, t);
             float measured = MotorToJointPos(joint, cur.position);
             float torque = MotorToJointTorque(joint, cur.torque);
             UpdateWaveStats(stats, online, err.error_code, err.pattern, desired, measured, torque, t);
@@ -625,13 +651,19 @@ int RunWaveTest(const Options& opt, const std::vector<std::pair<std::string, int
 int CmdSingle(const Options& opt) {
     int joint = RequireSingleJoint(opt);
     if (joint < 0) return 1;
-    return RunWaveTest(opt, {{"single", joint}}, false);
+    return RunWaveTest(opt, {{"single", joint}}, ExcitationMode::Sine);
 }
 
 int CmdChirp(const Options& opt) {
     int joint = RequireSingleJoint(opt);
     if (joint < 0) return 1;
-    return RunWaveTest(opt, {{"chirp", joint}}, true);
+    return RunWaveTest(opt, {{"chirp", joint}}, ExcitationMode::Chirp);
+}
+
+int CmdStep(const Options& opt) {
+    int joint = RequireSingleJoint(opt);
+    if (joint < 0) return 1;
+    return RunWaveTest(opt, {{"step", joint}}, ExcitationMode::Step);
 }
 
 int CmdCompare(const Options& opt) {
@@ -640,7 +672,7 @@ int CmdCompare(const Options& opt) {
         std::cerr << "compare requires --joint BAD --ref GOOD" << std::endl;
         return 1;
     }
-    return RunWaveTest(opt, {{"suspect", joint}, {"reference", opt.ref_joint}}, false);
+    return RunWaveTest(opt, {{"suspect", joint}, {"reference", opt.ref_joint}}, ExcitationMode::Sine);
 }
 
 int CmdDamping(const Options& opt) {
@@ -699,6 +731,7 @@ int main(int argc, char** argv) {
         if (cmd == "fault-log") return CmdFaultLog(opt);
         if (cmd == "single") return CmdSingle(opt);
         if (cmd == "chirp") return CmdChirp(opt);
+        if (cmd == "step") return CmdStep(opt);
         if (cmd == "compare") return CmdCompare(opt);
         if (cmd == "damping") return CmdDamping(opt);
         if (cmd == "disable") return CmdDisable(opt);
