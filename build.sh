@@ -30,7 +30,7 @@ if [ "$ACTION" = "full" ]; then
     echo ""
     echo "[1/2] Building driver..."
     cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
-    cmake --build driver/build --target dog_driver collect_pace_data motor_diag -j$(nproc) 2>&1 | tail -3
+    cmake --build driver/build --target dog_driver collect_pace_data motor_diag motor_squat_diag -j$(nproc) 2>&1 | tail -3
     cp -u driver/build/libdog_driver.so driver/libdog_driver.so 2>/dev/null || true
 
     echo ""
@@ -48,7 +48,7 @@ elif [ "$ACTION" = "make" ]; then
     if [ ! -f driver/build/Makefile ] || [ driver/CMakeLists.txt -nt driver/build/Makefile ]; then
         cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
     fi
-    cmake --build driver/build --target dog_driver collect_pace_data motor_diag -j$(nproc) 2>&1 | tail -3
+    cmake --build driver/build --target dog_driver collect_pace_data motor_diag motor_squat_diag -j$(nproc) 2>&1 | tail -3
     cp -u driver/build/libdog_driver.so driver/libdog_driver.so 2>/dev/null || true
 
     source_ros2

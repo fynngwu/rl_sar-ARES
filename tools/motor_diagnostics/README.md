@@ -29,7 +29,7 @@ CAN 分配：`can0=LF`，`can1=LR`，`can2=RF`，`can3=RR`。
 ./build.sh
 ```
 
-生成目标在 `driver/build/motor_diag`。`build.sh` 会同时安装主 ROS 节点到 `~/.local/bin`。
+生成目标在 `driver/build/motor_diag` 和 `driver/build/motor_squat_diag`。`build.sh` 会同时安装主 ROS 节点到 `~/.local/bin`。
 
 ## Recommended Workflow
 
@@ -73,7 +73,21 @@ driver/build/motor_diag step --joint 8 --amp 0.03 --freq 0.5 --kp 8 --kd 0.4 --d
 
 建议先用同参数测试疑似关节和健康参考关节，再逐步提高 `--amp`、`--freq` 或 `--kp`，每次只改变一个参数。
 
-7. 常用安全命令：
+7. 整机起立 + 上下蹲压力测试：
+
+```bash
+driver/build/motor_squat_diag --amp 0.20 --freq 0.5 --kp 20 --kd 1.0 --duration 10
+```
+
+该工具使用 `DogDriver` 公共接口，先从当前姿态 2 秒插值到零位，再让四条腿同步上下蹲，并输出 12 个关节的最大力矩、最大跟踪误差和掉线统计。默认保持零位退出；确认安全支撑后可加 `--disable-on-exit`。
+
+更激烈的目标突变测试：
+
+```bash
+driver/build/motor_squat_diag --profile step --amp 0.20 --freq 0.5 --kp 20 --kd 1.0 --duration 8
+```
+
+8. 常用安全命令：
 
 ```bash
 driver/build/motor_diag damping --joint 8

@@ -56,3 +56,18 @@ target_link_libraries(motor_diag
 )
 
 target_compile_options(motor_diag PRIVATE -Wall -Wextra)
+
+add_executable(motor_squat_diag
+    ../tools/motor_diagnostics/motor_squat_diag.cpp
+)
+
+target_include_directories(motor_squat_diag PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(motor_squat_diag
+    dog_driver
+    Threads::Threads
+)
+
+target_compile_options(motor_squat_diag PRIVATE -Wall -Wextra)
