@@ -45,12 +45,31 @@ constexpr std::array<std::pair<float, float>, NUM_JOINTS> kPositionLimits = {{
     {-0.8f,        1.0217287f},
 }};
 
-// Same sign convention as collect_pace_data's default joint directions.
-// HipA stays neutral; HipF and Knee bend in opposite directions per leg.
+// Four legs in phase: no front/rear or diagonal phase split.
+// HipA stays neutral; HipF and Knee move as one whole-body squat target.
 constexpr std::array<float, NUM_JOINTS> kSquatShape = {
+     0.0f,  0.0f,  0.0f,  0.0f,
+     0.7f,  0.7f,  0.7f,  0.7f,
+    -1.0f, -1.0f, -1.0f, -1.0f,
+};
+
+constexpr std::array<float, NUM_JOINTS> kReverseSquatShape = {
+     0.0f,  0.0f,  0.0f,  0.0f,
+    -0.7f, -0.7f, -0.7f, -0.7f,
+     1.0f,  1.0f,  1.0f,  1.0f,
+};
+
+// Old diagnostic shape retained for comparison only; it can look gait-like.
+constexpr std::array<float, NUM_JOINTS> kLegacyShape = {
      0.0f,  0.0f,  0.0f,  0.0f,
      0.7f, -0.7f,  0.7f, -0.7f,
     -1.0f,  1.0f, -1.0f,  1.0f,
+};
+
+enum class SquatShape {
+    Squat,
+    Reverse,
+    Legacy,
 };
 
 struct Options {
@@ -65,6 +84,7 @@ struct Options {
     double loop_hz = 200.0;
     bool disable_on_exit = false;
     bool step_profile = false;
+    SquatShape shape = SquatShape::Squat;
     std::string log_dir = "diagnostics_logs";
 };
 
@@ -116,6 +136,7 @@ void Usage(const char* prog) {
         << "  --hold-duration SEC  Hold zero pose before/after squat (default 0.5)\n"
         << "  --loop-hz HZ         Command/log rate, deployment-like default 200\n"
         << "  --profile sine|step  Smooth squat or abrupt up/down target (default sine)\n"
+        << "  --shape squat|reverse|legacy  Squat joint signs (default squat)\n"
         << "  --disable-on-exit    Disable all motors at exit; use only when supported\n"
         << "  --log-dir DIR        Log directory (default diagnostics_logs)\n";
 }
@@ -176,6 +197,16 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
                 std::cerr << "--profile must be sine or step" << std::endl;
                 return false;
             }
+        } else if (arg == "--shape") {
+            if (!need_value(arg.c_str())) return false;
+            std::string shape = argv[++i];
+            if (shape == "squat") opt.shape = SquatShape::Squat;
+            else if (shape == "reverse") opt.shape = SquatShape::Reverse;
+            else if (shape == "legacy") opt.shape = SquatShape::Legacy;
+            else {
+                std::cerr << "--shape must be squat, reverse, or legacy" << std::endl;
+                return false;
+            }
         } else if (arg == "--disable-on-exit") {
             opt.disable_on_exit = true;
         } else if (arg == "--log-dir") {
@@ -196,6 +227,18 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
         return false;
     }
     return true;
+}
+
+const std::array<float, NUM_JOINTS>& ShapeVector(SquatShape shape) {
+    if (shape == SquatShape::Reverse) return kReverseSquatShape;
+    if (shape == SquatShape::Legacy) return kLegacyShape;
+    return kSquatShape;
+}
+
+const char* ShapeName(SquatShape shape) {
+    if (shape == SquatShape::Reverse) return "reverse";
+    if (shape == SquatShape::Legacy) return "legacy";
+    return "squat";
 }
 
 std::ofstream OpenLog(const Options& opt) {
@@ -303,8 +346,9 @@ std::array<float, NUM_JOINTS> SquatTarget(const Options& opt, double t_sec) {
     }
 
     std::array<float, NUM_JOINTS> target{};
+    const auto& shape = ShapeVector(opt.shape);
     for (int i = 0; i < NUM_JOINTS; ++i)
-        target[i] = opt.amp * phase * kSquatShape[i];
+        target[i] = opt.amp * phase * shape[i];
     return ClampPose(target);
 }
 
@@ -361,6 +405,7 @@ int main(int argc, char** argv) {
         std::cout << "kp=" << opt.kp << " kd=" << opt.kd
                   << " amp=" << opt.amp << " freq=" << opt.freq
                   << " profile=" << (opt.step_profile ? "step" : "sine")
+                  << " shape=" << ShapeName(opt.shape)
                   << " loop_hz=" << opt.loop_hz << std::endl;
 
         DogDriver driver;
