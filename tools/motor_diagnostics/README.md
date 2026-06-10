@@ -80,7 +80,11 @@ driver/build/motor_squat_diag --amp 0.20 --freq 0.5 --kp 20 --kd 1.0 --duration 
 ```
 
 该工具使用 `DogDriver` 公共接口，先从当前姿态 2 秒插值到零位，再让四条腿同步上下蹲，并输出 12 个关节的最大力矩、最大跟踪误差和掉线统计。默认保持零位退出；确认安全支撑后可加 `--disable-on-exit`。
-默认 `--shape squat` 让四条腿完全同相运动；如果实际机构方向表现为反向抬升，可改用 `--shape reverse`。
+默认 `--shape squat` 使用左右镜像的 HipF/Knee 符号；如果实际机构方向表现为反向抬升，可改用 `--shape reverse`。若现场仍不是整机同相上下，可用低幅度自定义符号快速验证：
+
+```bash
+driver/build/motor_squat_diag --amp 0.05 --freq 0.2 --duration 4 --hipf-signs 1,1,-1,-1 --knee-signs -1,-1,1,1
+```
 
 更激烈的目标突变测试：
 

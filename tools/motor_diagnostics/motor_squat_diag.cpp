@@ -19,6 +19,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr int NUM_JOINTS = DogDriver::NUM_JOINTS;
+constexpr int NUM_LEGS = DogDriver::NUM_LEGS;
 constexpr float PI = 3.14159265358979323846f;
 constexpr const char* VERSION = "20260611_squat";
 
@@ -45,18 +46,27 @@ constexpr std::array<std::pair<float, float>, NUM_JOINTS> kPositionLimits = {{
     {-0.8f,        1.0217287f},
 }};
 
-// Four legs in phase: no front/rear or diagonal phase split.
-// HipA stays neutral; HipF and Knee move as one whole-body squat target.
+// Driver order is LF, LR, RF, RR inside each joint group. HipF/Knee position
+// limits are mirrored between left and right sides, so the default squat shape
+// mirrors left and right rather than sending the same sign to all four legs.
 constexpr std::array<float, NUM_JOINTS> kSquatShape = {
      0.0f,  0.0f,  0.0f,  0.0f,
-     0.7f,  0.7f,  0.7f,  0.7f,
-    -1.0f, -1.0f, -1.0f, -1.0f,
+     0.7f,  0.7f, -0.7f, -0.7f,
+    -1.0f, -1.0f,  1.0f,  1.0f,
 };
 
 constexpr std::array<float, NUM_JOINTS> kReverseSquatShape = {
      0.0f,  0.0f,  0.0f,  0.0f,
-    -0.7f, -0.7f, -0.7f, -0.7f,
-     1.0f,  1.0f,  1.0f,  1.0f,
+    -0.7f, -0.7f,  0.7f,  0.7f,
+     1.0f,  1.0f, -1.0f, -1.0f,
+};
+
+// Same command sign on all four legs. Kept because it is a useful diagnostic,
+// but it is not the default squat shape on this mirrored joint convention.
+constexpr std::array<float, NUM_JOINTS> kSameSignShape = {
+     0.0f,  0.0f,  0.0f,  0.0f,
+     0.7f,  0.7f,  0.7f,  0.7f,
+    -1.0f, -1.0f, -1.0f, -1.0f,
 };
 
 // Old diagnostic shape retained for comparison only; it can look gait-like.
@@ -69,7 +79,9 @@ constexpr std::array<float, NUM_JOINTS> kLegacyShape = {
 enum class SquatShape {
     Squat,
     Reverse,
+    Same,
     Legacy,
+    Custom,
 };
 
 struct Options {
@@ -85,6 +97,8 @@ struct Options {
     bool disable_on_exit = false;
     bool step_profile = false;
     SquatShape shape = SquatShape::Squat;
+    std::array<float, NUM_LEGS> hipf_signs = {1.0f, 1.0f, -1.0f, -1.0f};
+    std::array<float, NUM_LEGS> knee_signs = {-1.0f, -1.0f, 1.0f, 1.0f};
     std::string log_dir = "diagnostics_logs";
 };
 
@@ -136,7 +150,9 @@ void Usage(const char* prog) {
         << "  --hold-duration SEC  Hold zero pose before/after squat (default 0.5)\n"
         << "  --loop-hz HZ         Command/log rate, deployment-like default 200\n"
         << "  --profile sine|step  Smooth squat or abrupt up/down target (default sine)\n"
-        << "  --shape squat|reverse|legacy  Squat joint signs (default squat)\n"
+        << "  --shape squat|reverse|same|legacy  Squat joint signs (default squat)\n"
+        << "  --hipf-signs a,b,c,d Override LF,LR,RF,RR HipF signs\n"
+        << "  --knee-signs a,b,c,d Override LF,LR,RF,RR Knee signs\n"
         << "  --disable-on-exit    Disable all motors at exit; use only when supported\n"
         << "  --log-dir DIR        Log directory (default diagnostics_logs)\n";
 }
@@ -157,6 +173,20 @@ bool ParseDouble(const char* text, double& out) {
     } catch (...) {
         return false;
     }
+}
+
+bool ParseSignList(const char* text, std::array<float, NUM_LEGS>& out) {
+    std::string s(text);
+    std::replace(s.begin(), s.end(), ',', ' ');
+    std::istringstream iss(s);
+    for (int i = 0; i < NUM_LEGS; ++i) {
+        if (!(iss >> out[i])) return false;
+        if (out[i] > 0.0f) out[i] = 1.0f;
+        else if (out[i] < 0.0f) out[i] = -1.0f;
+        else return false;
+    }
+    std::string extra;
+    return !(iss >> extra);
 }
 
 bool ParseArgs(int argc, char** argv, Options& opt) {
@@ -202,11 +232,26 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
             std::string shape = argv[++i];
             if (shape == "squat") opt.shape = SquatShape::Squat;
             else if (shape == "reverse") opt.shape = SquatShape::Reverse;
+            else if (shape == "same") opt.shape = SquatShape::Same;
             else if (shape == "legacy") opt.shape = SquatShape::Legacy;
             else {
-                std::cerr << "--shape must be squat, reverse, or legacy" << std::endl;
+                std::cerr << "--shape must be squat, reverse, same, or legacy" << std::endl;
                 return false;
             }
+        } else if (arg == "--hipf-signs") {
+            if (!need_value(arg.c_str())) return false;
+            if (!ParseSignList(argv[++i], opt.hipf_signs)) {
+                std::cerr << "--hipf-signs must be four nonzero values, e.g. 1,1,-1,-1" << std::endl;
+                return false;
+            }
+            opt.shape = SquatShape::Custom;
+        } else if (arg == "--knee-signs") {
+            if (!need_value(arg.c_str())) return false;
+            if (!ParseSignList(argv[++i], opt.knee_signs)) {
+                std::cerr << "--knee-signs must be four nonzero values, e.g. -1,-1,1,1" << std::endl;
+                return false;
+            }
+            opt.shape = SquatShape::Custom;
         } else if (arg == "--disable-on-exit") {
             opt.disable_on_exit = true;
         } else if (arg == "--log-dir") {
@@ -229,16 +274,36 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
     return true;
 }
 
-const std::array<float, NUM_JOINTS>& ShapeVector(SquatShape shape) {
-    if (shape == SquatShape::Reverse) return kReverseSquatShape;
-    if (shape == SquatShape::Legacy) return kLegacyShape;
+std::array<float, NUM_JOINTS> ShapeVector(const Options& opt) {
+    if (opt.shape == SquatShape::Reverse) return kReverseSquatShape;
+    if (opt.shape == SquatShape::Same) return kSameSignShape;
+    if (opt.shape == SquatShape::Legacy) return kLegacyShape;
+    if (opt.shape == SquatShape::Custom) {
+        std::array<float, NUM_JOINTS> custom{};
+        for (int leg = 0; leg < NUM_LEGS; ++leg) {
+            custom[4 + leg] = 0.7f * opt.hipf_signs[leg];
+            custom[8 + leg] = opt.knee_signs[leg];
+        }
+        return custom;
+    }
     return kSquatShape;
 }
 
 const char* ShapeName(SquatShape shape) {
     if (shape == SquatShape::Reverse) return "reverse";
+    if (shape == SquatShape::Same) return "same";
     if (shape == SquatShape::Legacy) return "legacy";
+    if (shape == SquatShape::Custom) return "custom";
     return "squat";
+}
+
+std::string FormatSigns(const std::array<float, NUM_LEGS>& signs) {
+    std::ostringstream oss;
+    for (int i = 0; i < NUM_LEGS; ++i) {
+        if (i > 0) oss << ",";
+        oss << (signs[i] > 0.0f ? "+1" : "-1");
+    }
+    return oss.str();
 }
 
 std::ofstream OpenLog(const Options& opt) {
@@ -346,7 +411,7 @@ std::array<float, NUM_JOINTS> SquatTarget(const Options& opt, double t_sec) {
     }
 
     std::array<float, NUM_JOINTS> target{};
-    const auto& shape = ShapeVector(opt.shape);
+    const auto shape = ShapeVector(opt);
     for (int i = 0; i < NUM_JOINTS; ++i)
         target[i] = opt.amp * phase * shape[i];
     return ClampPose(target);
@@ -407,6 +472,10 @@ int main(int argc, char** argv) {
                   << " profile=" << (opt.step_profile ? "step" : "sine")
                   << " shape=" << ShapeName(opt.shape)
                   << " loop_hz=" << opt.loop_hz << std::endl;
+        if (opt.shape == SquatShape::Custom) {
+            std::cout << "custom hipf_signs(LF,LR,RF,RR)=" << FormatSigns(opt.hipf_signs)
+                      << " knee_signs=" << FormatSigns(opt.knee_signs) << std::endl;
+        }
 
         DogDriver driver;
         ConfigureDriver(driver, opt);
