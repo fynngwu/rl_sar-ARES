@@ -96,6 +96,7 @@ struct Options {
     double loop_hz = 200.0;
     bool disable_on_exit = false;
     bool step_profile = false;
+    bool abort_on_offline = true;
     SquatShape shape = SquatShape::Squat;
     std::array<float, NUM_LEGS> hipf_signs = {1.0f, 1.0f, -1.0f, -1.0f};
     std::array<float, NUM_LEGS> knee_signs = {-1.0f, -1.0f, 1.0f, 1.0f};
@@ -153,6 +154,7 @@ void Usage(const char* prog) {
         << "  --shape squat|reverse|same|legacy  Squat joint signs (default squat)\n"
         << "  --hipf-signs a,b,c,d Override LF,LR,RF,RR HipF signs\n"
         << "  --knee-signs a,b,c,d Override LF,LR,RF,RR Knee signs\n"
+        << "  --no-abort-on-offline Continue even if a joint goes offline\n"
         << "  --disable-on-exit    Disable all motors at exit; use only when supported\n"
         << "  --log-dir DIR        Log directory (default diagnostics_logs)\n";
 }
@@ -254,6 +256,8 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
             opt.shape = SquatShape::Custom;
         } else if (arg == "--disable-on-exit") {
             opt.disable_on_exit = true;
+        } else if (arg == "--no-abort-on-offline") {
+            opt.abort_on_offline = false;
         } else if (arg == "--log-dir") {
             if (!need_value(arg.c_str())) return false;
             opt.log_dir = argv[++i];
@@ -329,13 +333,15 @@ void ConfigureDriver(DogDriver& driver, const Options& opt) {
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
-void WriteLogRows(std::ofstream& out, DogDriver& driver, const std::string& phase,
+bool WriteLogRows(std::ofstream& out, DogDriver& driver, const std::string& phase,
                   double t_sec, const std::array<float, NUM_JOINTS>& desired,
                   std::array<JointStats, NUM_JOINTS>& stats) {
     auto state = driver.GetJointStates();
+    bool all_online = true;
     out << std::fixed << std::setprecision(6);
     for (int i = 0; i < NUM_JOINTS; ++i) {
         bool online = driver.IsJointOnline(i);
+        if (!online) all_online = false;
         auto& s = stats[i];
         s.samples++;
         if (!online) {
@@ -352,16 +358,17 @@ void WriteLogRows(std::ofstream& out, DogDriver& driver, const std::string& phas
             << state.velocity[i] << "," << state.torque[i] << ","
             << (online ? 1 : 0) << "\n";
     }
+    return all_online;
 }
 
-void SendAndLog(DogDriver& driver, std::ofstream& out, const std::string& phase,
+bool SendAndLog(DogDriver& driver, std::ofstream& out, const std::string& phase,
                 double t_sec, const std::array<float, NUM_JOINTS>& desired,
                 std::array<JointStats, NUM_JOINTS>& stats) {
     driver.SetAllJointPositions(desired);
-    WriteLogRows(out, driver, phase, t_sec, desired, stats);
+    return WriteLogRows(out, driver, phase, t_sec, desired, stats);
 }
 
-void RunForDuration(DogDriver& driver, std::ofstream& out, const Options& opt,
+bool RunForDuration(DogDriver& driver, std::ofstream& out, const Options& opt,
                     const std::string& phase, double duration,
                     const std::array<float, NUM_JOINTS>& desired,
                     std::array<JointStats, NUM_JOINTS>& stats) {
@@ -371,13 +378,18 @@ void RunForDuration(DogDriver& driver, std::ofstream& out, const Options& opt,
     while (g_running.load()) {
         double t = std::chrono::duration<double>(Clock::now() - start).count();
         if (t >= duration) break;
-        SendAndLog(driver, out, phase, t, desired, stats);
+        bool all_online = SendAndLog(driver, out, phase, t, desired, stats);
+        if (opt.abort_on_offline && !all_online) {
+            std::cerr << "ERROR: joint offline during " << phase << ", aborting motion." << std::endl;
+            return false;
+        }
         next_tick += std::chrono::duration_cast<Clock::duration>(tick);
         std::this_thread::sleep_until(next_tick);
     }
+    return true;
 }
 
-void RunStand(DogDriver& driver, std::ofstream& out, const Options& opt,
+bool RunStand(DogDriver& driver, std::ofstream& out, const Options& opt,
               std::array<JointStats, NUM_JOINTS>& stats) {
     auto start_state = driver.GetJointStates();
     std::array<float, NUM_JOINTS> zero{};
@@ -393,11 +405,15 @@ void RunStand(DogDriver& driver, std::ofstream& out, const Options& opt,
         std::array<float, NUM_JOINTS> target{};
         for (int i = 0; i < NUM_JOINTS; ++i)
             target[i] = start_state.position[i] * (1.0f - alpha);
-        SendAndLog(driver, out, "stand", t, ClampPose(target), stats);
+        bool all_online = SendAndLog(driver, out, "stand", t, ClampPose(target), stats);
+        if (opt.abort_on_offline && !all_online) {
+            std::cerr << "ERROR: joint offline during stand, aborting motion." << std::endl;
+            return false;
+        }
         next_tick += std::chrono::duration_cast<Clock::duration>(tick);
         std::this_thread::sleep_until(next_tick);
     }
-    SendAndLog(driver, out, "stand", opt.stand_duration, zero, stats);
+    return SendAndLog(driver, out, "stand", opt.stand_duration, zero, stats) || !opt.abort_on_offline;
 }
 
 std::array<float, NUM_JOINTS> SquatTarget(const Options& opt, double t_sec) {
@@ -417,7 +433,7 @@ std::array<float, NUM_JOINTS> SquatTarget(const Options& opt, double t_sec) {
     return ClampPose(target);
 }
 
-void RunSquat(DogDriver& driver, std::ofstream& out, const Options& opt,
+bool RunSquat(DogDriver& driver, std::ofstream& out, const Options& opt,
               std::array<JointStats, NUM_JOINTS>& stats) {
     const auto tick = std::chrono::duration<double>(1.0 / opt.loop_hz);
     auto start = Clock::now();
@@ -426,10 +442,15 @@ void RunSquat(DogDriver& driver, std::ofstream& out, const Options& opt,
         double t = std::chrono::duration<double>(Clock::now() - start).count();
         if (t >= opt.duration) break;
         auto target = SquatTarget(opt, t);
-        SendAndLog(driver, out, "squat", t, target, stats);
+        bool all_online = SendAndLog(driver, out, "squat", t, target, stats);
+        if (opt.abort_on_offline && !all_online) {
+            std::cerr << "ERROR: joint offline during squat, aborting motion." << std::endl;
+            return false;
+        }
         next_tick += std::chrono::duration_cast<Clock::duration>(tick);
         std::this_thread::sleep_until(next_tick);
     }
+    return true;
 }
 
 void PrintSummary(const std::array<JointStats, NUM_JOINTS>& stats) {
@@ -483,11 +504,11 @@ int main(int argc, char** argv) {
         auto out = OpenLog(opt);
         std::array<JointStats, NUM_JOINTS> stats{};
 
-        RunStand(driver, out, opt, stats);
+        bool ok = RunStand(driver, out, opt, stats);
         std::array<float, NUM_JOINTS> zero{};
-        RunForDuration(driver, out, opt, "hold_before", opt.hold_duration, zero, stats);
-        RunSquat(driver, out, opt, stats);
-        RunForDuration(driver, out, opt, "hold_after", opt.hold_duration, zero, stats);
+        if (ok) ok = RunForDuration(driver, out, opt, "hold_before", opt.hold_duration, zero, stats);
+        if (ok) ok = RunSquat(driver, out, opt, stats);
+        if (ok) ok = RunForDuration(driver, out, opt, "hold_after", opt.hold_duration, zero, stats);
 
         PrintSummary(stats);
 
@@ -498,7 +519,7 @@ int main(int argc, char** argv) {
             driver.SetAllJointPositions(zero);
             std::cout << "Holding zero pose on exit. Use --disable-on-exit only when supported." << std::endl;
         }
-        return g_running.load() ? 0 : 2;
+        return (g_running.load() && ok) ? 0 : 2;
     } catch (const std::exception& ex) {
         std::cerr << "[motor_squat_diag] ERROR: " << ex.what() << std::endl;
         return 1;

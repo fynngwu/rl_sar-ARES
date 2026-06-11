@@ -110,3 +110,14 @@ python3 tools/torque_monitor.py 10
 ```
 
 它只订阅 `/motor_feedback`，不会直接控制电机。
+
+## Plot Logs
+
+诊断 CSV 的 `t` 列是控制循环采样时间，`torque` 是该时刻读取到的最新电机反馈力矩。可用脚本生成时间-力矩曲线：
+
+```bash
+python3 tools/motor_diagnostics/plot_torque.py diagnostics_logs/squat_YYYYMMDD_HHMMSS.csv
+python3 tools/motor_diagnostics/plot_torque.py diagnostics_logs/squat_YYYYMMDD_HHMMSS.csv -j 9 -j 10 --abs
+```
+
+输出默认保存为同目录下的 `*_torque.png`。红色叉号表示日志中该采样点 `online=0`。

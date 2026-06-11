@@ -6,3 +6,5 @@ policy/dogv2_cts/cts/
 *.so
 *.a
 .history/
+*pycache*
+diagnostics_logs/*
