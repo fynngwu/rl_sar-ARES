@@ -25,9 +25,10 @@ def joint_matches(row, joint_filter):
     return row["joint"] in joint_filter or row["joint_name"] in joint_filter
 
 
-def load_rows(path, joint_filter):
+def load_rows(path, joint_filter, global_time):
     series = {}
     offline_points = {}
+    time_state = {}
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
         required = {"t", "joint", "joint_name", "torque"}
@@ -47,6 +48,18 @@ def load_rows(path, joint_filter):
                 continue
 
             key = f'{row["joint"]}:{row["joint_name"]}'
+            if global_time:
+                state = time_state.setdefault(key, {"offset": 0.0, "last_raw": None, "last_global": None})
+                last_raw = state["last_raw"]
+                if last_raw is not None and t < last_raw - 1e-6:
+                    state["offset"] = (state["last_global"] or 0.0) + 1e-3
+                    series.setdefault(key, {"t": [], "torque": []})
+                    series[key]["t"].append(float("nan"))
+                    series[key]["torque"].append(float("nan"))
+                state["last_raw"] = t
+                t = state["offset"] + t
+                state["last_global"] = t
+
             series.setdefault(key, {"t": [], "torque": []})
             series[key]["t"].append(t)
             series[key]["torque"].append(torque)
@@ -114,6 +127,10 @@ def main():
     parser.add_argument("-o", "--output", type=Path, help="output PNG path")
     parser.add_argument("--title", help="plot title")
     parser.add_argument("--abs", action="store_true", help="plot absolute torque")
+    parser.add_argument(
+        "--phase-time", action="store_true",
+        help="plot raw phase-local time; default stitches phase-local time into global time"
+    )
     parser.add_argument("--show", action="store_true", help="also open an interactive window")
     args = parser.parse_args()
 
@@ -124,7 +141,7 @@ def main():
     joint_filter = parse_joint_filter(args.joint)
     output = args.output or default_output_path(csv_path)
     title = args.title or csv_path.name
-    series, offline_points = load_rows(csv_path, joint_filter)
+    series, offline_points = load_rows(csv_path, joint_filter, not args.phase_time)
     plot(series, offline_points, output, title, args.show, args.abs)
 
 

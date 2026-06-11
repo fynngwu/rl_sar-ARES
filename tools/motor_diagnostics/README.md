@@ -121,3 +121,4 @@ python3 tools/motor_diagnostics/plot_torque.py diagnostics_logs/squat_YYYYMMDD_H
 ```
 
 输出默认保存为同目录下的 `*_torque.png`。红色叉号表示日志中该采样点 `online=0`。
+`motor_squat_diag` 的 CSV 在 `stand/hold/squat` 各阶段会重新从 `t=0` 计时；绘图脚本默认会拼接成全局时间，避免跨阶段连出水平或斜向直线。若需要查看原始阶段内时间，可加 `--phase-time`。
