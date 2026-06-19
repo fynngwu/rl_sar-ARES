@@ -331,48 +331,6 @@ void RL::AttitudeProtect(const std::vector<float> &quaternion, float pitch_thres
     }
 }
 
-#include <termios.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
-#include <unistd.h>
-
-static int kbhit()
-{
-    static bool initialized = false;
-    static termios original_term;
-
-    // Initialize terminal to non-canonical mode on first call
-    if (!initialized)
-    {
-        tcgetattr(STDIN_FILENO, &original_term);
-
-        termios new_term = original_term;
-        new_term.c_lflag &= ~(ICANON | ECHO);  // Disable canonical mode and echo
-        new_term.c_cc[VMIN] = 0;   // Non-blocking read
-        new_term.c_cc[VTIME] = 0;  // No timeout
-
-        tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
-
-        // Register cleanup function to restore terminal on exit
-        static bool cleanup_registered = false;
-        if (!cleanup_registered)
-        {
-            std::atexit([]() {
-                tcsetattr(STDIN_FILENO, TCSANOW, &original_term);
-            });
-            cleanup_registered = true;
-        }
-
-        initialized = true;
-    }
-
-    // Non-blocking read of a single character
-    char c;
-    int result = read(STDIN_FILENO, &c, 1);
-
-    return (result == 1) ? (unsigned char)c : -1;
-}
-
 void RL::KeyboardInterface()
 {
     int c = kbhit();

@@ -1,16 +1,12 @@
 #include "rl_core.hpp"
+#include "joint_names.hpp"
+#include "yaml_utils.hpp"
 #include <yaml-cpp/yaml.h>
 
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
-
-static constexpr const char* kJointNames[12] = {
-    "FL_HipA", "RL_HipA", "FR_HipA", "RR_HipA",
-    "FL_HipF", "RL_HipF", "FR_HipF", "RR_HipF",
-    "FL_Knee", "RL_Knee", "FR_Knee", "RR_Knee"
-};
 
 AresRL::AresRL() {}
 
@@ -48,51 +44,28 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
             model_fn = rc["model_name"].as<std::string>();
 
         if (rc["observations"]) {
-            const auto& list = rc["observations"];
-            observations_.clear();
-            for (const auto& item : list)
-                observations_.push_back(item.as<std::string>());
+            observations_ = yaml_utils::LoadStringArray(rc["observations"]);
         }
 
         if (rc["observations_history"]) {
-            obs_history_.clear();
-            for (const auto& step : rc["observations_history"])
-                obs_history_.push_back(step.as<int>());
+            obs_history_ = yaml_utils::LoadIntArray(rc["observations_history"]);
         }
 
-        auto read_floats = [&](const char* key) {
-            std::vector<float> result;
-            if (rc[key])
-                for (const auto& item : rc[key])
-                    result.push_back(item.as<float>());
-            return result;
-        };
-        clip_actions_upper_ = read_floats("clip_actions_upper");
-        clip_actions_lower_ = read_floats("clip_actions_lower");
-        commands_scale_     = read_floats("commands_scale");
-        default_dof_pos_    = read_floats("default_dof_pos");
+        clip_actions_upper_ = yaml_utils::LoadFloatArray(rc["clip_actions_upper"]);
+        clip_actions_lower_ = yaml_utils::LoadFloatArray(rc["clip_actions_lower"]);
+        commands_scale_     = yaml_utils::LoadFloatArray(rc["commands_scale"]);
+        default_dof_pos_    = yaml_utils::LoadFloatArray(rc["default_dof_pos"]);
 
         if (rc["topic_to_driver"]) {
-            auto order = rc["topic_to_driver"];
-            for (int i = 0; i < 12; ++i)
-                topic_to_driver_[i] = order[i].as<int>();
+            topic_to_driver_ = yaml_utils::LoadIntArray(rc["topic_to_driver"]);
             for (int i = 0; i < 12; ++i)
                 driver_to_topic_[topic_to_driver_[i]] = i;
         }
 
-        auto read_scalar_or_list = [&](const YAML::Node& node) -> std::vector<float> {
-            if (node.IsSequence()) {
-                std::vector<float> values;
-                for (const auto& item : node)
-                    values.push_back(item.as<float>());
-                return values;
-            }
-            return std::vector<float>(num_of_dofs_, node.as<float>());
-        };
-        current_kp_            = read_scalar_or_list(rc["fixed_kp"]);
-        current_kd_            = read_scalar_or_list(rc["fixed_kd"]);
-        current_torque_limits_ = read_scalar_or_list(rc["torque_limits"]);
-        action_scale_          = read_scalar_or_list(rc["action_scale"]);
+        current_kp_            = yaml_utils::LoadScalarOrArray(rc["fixed_kp"], num_of_dofs_);
+        current_kd_            = yaml_utils::LoadScalarOrArray(rc["fixed_kd"], num_of_dofs_);
+        current_torque_limits_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], num_of_dofs_);
+        action_scale_          = yaml_utils::LoadScalarOrArray(rc["action_scale"], num_of_dofs_);
 
         // Load position limits from YAML
         position_limits_.clear();
@@ -450,7 +423,7 @@ void AresRL::PrintStatus()
         for (int i = 0; i < num_of_dofs_; ++i) {
             int t = driver_to_topic_[i];
             printf("%-12s %10.4f %10.4f %10.4f %10.4f\n",
-                   kJointNames[i],
+                   kJointNamesByDof[i],
                    snap_joint_pos_[t], snap_joint_vel_[t],
                    snap_joint_torque_[t], latest_target_pos_[t]);
         }

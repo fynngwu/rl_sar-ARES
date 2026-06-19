@@ -8,6 +8,7 @@
 #include "geometry_msgs/msg/twist.hpp"
 
 #include "ares_driver_core.hpp"
+#include "joint_names.hpp"
 
 #include <array>
 #include <chrono>
@@ -17,13 +18,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
-static constexpr const char* kJointNames[AresDriverCore::NUM_JOINTS] = {
-    "fl_hipa", "fl_hipf", "fl_knee",
-    "rl_hipa", "rl_hipf", "rl_knee",
-    "fr_hipa", "fr_hipf", "fr_knee",
-    "rr_hipa", "rr_hipf", "rr_knee"
-};
 
 class AresDriverNode : public rclcpp::Node
 {
@@ -107,7 +101,7 @@ private:
         sensor_msgs::msg::JointState feedback_msg;
         feedback_msg.header.stamp = this->now();
         for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i) {
-            feedback_msg.name.push_back(kJointNames[i]);
+            feedback_msg.name.push_back(kJointNamesByLeg[i]);
             feedback_msg.position.push_back(joint_states.position[i]);
             feedback_msg.velocity.push_back(joint_states.velocity[i]);
             feedback_msg.effort.push_back(joint_states.torque[i]);

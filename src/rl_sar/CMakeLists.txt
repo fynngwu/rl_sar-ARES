@@ -215,6 +215,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
 
 if(DOG_DRIVER_LIB)
         add_library(ares_driver_core STATIC src/ares_driver_core.cpp src/keyboard_helper.cpp)
+        target_include_directories(ares_driver_core PUBLIC include)
         target_link_libraries(ares_driver_core
             dog_driver
             ${YAML_CPP_LIBRARIES}

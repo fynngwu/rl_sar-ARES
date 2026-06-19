@@ -1,5 +1,6 @@
 #include "ares_driver_core.hpp"
 #include "keyboard_helper.hpp"
+#include "yaml_utils.hpp"
 
 #include "dog_driver.hpp"
 #include "observations.hpp"
@@ -27,18 +28,9 @@ public:
         if (!rc)
             throw std::runtime_error("Missing '" + policy_name + "' in " + config_path);
 
-        auto load_float_array = [&](const YAML::Node& n) -> std::vector<float> {
-            if (n.IsSequence()) {
-                std::vector<float> v;
-                for (const auto& e : n)
-                    v.push_back(e.as<float>());
-                return v;
-            }
-            return std::vector<float>(NUM_JOINTS, n.as<float>());
-        };
-        config_kp_ = load_float_array(rc["fixed_kp"]);
-        config_kd_ = load_float_array(rc["fixed_kd"]);
-        config_torque_ = load_float_array(rc["torque_limits"]);
+        config_kp_ = yaml_utils::LoadScalarOrArray(rc["fixed_kp"], NUM_JOINTS);
+        config_kd_ = yaml_utils::LoadScalarOrArray(rc["fixed_kd"], NUM_JOINTS);
+        config_torque_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], NUM_JOINTS);
         gamepad_scale_ = rc["gamepad_scale"].as<float>();
 
         driver_ = std::make_unique<DogDriver>();
