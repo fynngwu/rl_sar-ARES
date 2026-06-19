@@ -1,159 +1,153 @@
 /*
- * ARES Driver Node — thin ROS2 wrapper around AresDriverCore.
+ * ARES Driver Node — thin iceoryx wrapper around AresDriverCore.
  */
 
-#include "rclcpp/rclcpp.hpp"
-#include "sensor_msgs/msg/joint_state.hpp"
-#include "sensor_msgs/msg/imu.hpp"
-#include "geometry_msgs/msg/twist.hpp"
+#include "iceoryx_posh/popo/publisher.hpp"
+#include "iceoryx_posh/popo/subscriber.hpp"
+#include "iceoryx_posh/runtime/posh_runtime.hpp"
 
 #include "ares_driver_core.hpp"
 #include "joint_names.hpp"
+#include "iceoryx_transport.hpp"
+#include "loop.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
-#include <functional>
+#include <cstdio>
 #include <iomanip>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
-class AresDriverNode : public rclcpp::Node
+static std::atomic<bool> g_running{true};
+static void sigHandler(int) { g_running = false; }
+
+static std::string FmtFloatVec(const std::vector<float>& v)
 {
-public:
-    explicit AresDriverNode(const std::string& policy_name)
-        : Node("ares_driver_node"),
-          core_(std::make_unique<AresDriverCore>(std::string(POLICY_DIR), policy_name))
-    {
-        RCLCPP_INFO(this->get_logger(), "Initializing ARES Driver Node...");
-        RCLCPP_INFO(this->get_logger(), "  kp: %s", FmtFloatVec(core_->config_kp()).c_str());
-        RCLCPP_INFO(this->get_logger(), "  kd: %s", FmtFloatVec(core_->config_kd()).c_str());
-        RCLCPP_INFO(this->get_logger(), "  torque_limits: %s", FmtFloatVec(core_->config_torque()).c_str());
-        RCLCPP_INFO(this->get_logger(), "  gamepad_scale: %.2f", core_->gamepad_scale());
-        RCLCPP_INFO(this->get_logger(), "DogDriver ready. IMU: %s", core_->imu_connected() ? "yes" : "no");
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << "[";
+    for (size_t i = 0; i < v.size(); ++i)
+        oss << (i ? "," : "") << v[i];
+    oss << "]";
+    return oss.str();
+}
 
-        if (core_->gamepad_connected())
-            RCLCPP_INFO(this->get_logger(), "Gamepad: %s", core_->gamepad_name().c_str());
-        else
-            RCLCPP_WARN(this->get_logger(), "No gamepad at /dev/input/js0");
-
-        motor_feedback_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/motor_feedback", 10);
-        imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("/imu/data", 10);
-        xbox_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/xbox_vel", 10);
-
-        motor_command_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
-            "/motor_command", 10,
-            std::bind(&AresDriverNode::MotorCommandCallback, this, std::placeholders::_1));
-
-        motor_param_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
-            "/motor_param_update", 1,
-            std::bind(&AresDriverNode::MotorParamCallback, this, std::placeholders::_1));
-
-        feedback_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(10),
-            std::bind(&AresDriverNode::FeedbackTimerCallback, this));
-
-        RCLCPP_INFO(this->get_logger(), "ARES Driver Node started");
-        core_->PrintModeHelp();
-    }
-
-private:
-    std::string FmtFloatVec(const std::vector<float>& v)
-    {
-        std::ostringstream oss;
-        oss << std::fixed << std::setprecision(2) << "[";
-        for (size_t i = 0; i < v.size(); ++i)
-            oss << (i ? "," : "") << v[i];
-        oss << "]";
-        return oss.str();
-    }
-
-    void MotorCommandCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
-    {
-        if (msg->position.size() < AresDriverCore::NUM_JOINTS)
-            return;
-
-        std::array<float, AresDriverCore::NUM_JOINTS> target;
-        for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i)
-            target[i] = msg->position[i];
-        core_->SetTopicCommand(target);
-    }
-
-    void MotorParamCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
-    {
-        if (msg->position.size() < AresDriverCore::NUM_JOINTS)
-            return;
-        std::vector<float> kp(msg->position.begin(), msg->position.begin() + AresDriverCore::NUM_JOINTS);
-        std::vector<float> kd(AresDriverCore::NUM_JOINTS, 0.0f);
-        std::vector<float> torque;
-        if (msg->velocity.size() >= AresDriverCore::NUM_JOINTS)
-            kd.assign(msg->velocity.begin(), msg->velocity.begin() + AresDriverCore::NUM_JOINTS);
-        if (msg->effort.size() >= AresDriverCore::NUM_JOINTS)
-            torque.assign(msg->effort.begin(), msg->effort.begin() + AresDriverCore::NUM_JOINTS);
-        core_->SetMotorParams(kp, kd, torque);
-        RCLCPP_INFO(this->get_logger(), "Motor params updated from /motor_param_update");
-    }
-
-    void FeedbackTimerCallback()
-    {
-        auto joint_states = core_->GetTopicFeedback();
-        sensor_msgs::msg::JointState feedback_msg;
-        feedback_msg.header.stamp = this->now();
-        for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i) {
-            feedback_msg.name.push_back(kJointNamesByLeg[i]);
-            feedback_msg.position.push_back(joint_states.position[i]);
-            feedback_msg.velocity.push_back(joint_states.velocity[i]);
-            feedback_msg.effort.push_back(joint_states.torque[i]);
-        }
-        motor_feedback_pub_->publish(feedback_msg);
-
-        auto imu_data = core_->GetImuData();
-        sensor_msgs::msg::Imu imu_msg;
-        imu_msg.header.stamp = this->now();
-        imu_msg.header.frame_id = "imu_link";
-        imu_msg.orientation.w = 1.0;
-        imu_msg.angular_velocity.x = imu_data.angular_velocity[0];
-        imu_msg.angular_velocity.y = imu_data.angular_velocity[1];
-        imu_msg.angular_velocity.z = imu_data.angular_velocity[2];
-        imu_msg.linear_acceleration.x = imu_data.projected_gravity[0];
-        imu_msg.linear_acceleration.y = imu_data.projected_gravity[1];
-        imu_msg.linear_acceleration.z = imu_data.projected_gravity[2];
-        imu_pub_->publish(imu_msg);
-
-        auto gamepad = core_->PollGamepad();
-        if (gamepad.connected) {
-            geometry_msgs::msg::Twist twist;
-            twist.linear.x = gamepad.linear_x;
-            twist.linear.y = gamepad.linear_y;
-            twist.linear.z = gamepad.linear_z;
-            twist.angular.z = gamepad.angular_z;
-            xbox_vel_pub_->publish(twist);
-        }
-    }
-
-    std::unique_ptr<AresDriverCore> core_;
-
-    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_pub_;
-    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_command_sub_;
-    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
-    rclcpp::TimerBase::SharedPtr feedback_timer_;
-};
-
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
-    rclcpp::init(argc, argv);
+    signal(SIGINT, sigHandler);
+    signal(SIGTERM, sigHandler);
+
     std::string policy_name = (argc > 1) ? argv[1] : "ares_himloco/himloco";
-    RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node (policy: %s)...", policy_name.c_str());
+    printf("[ARES Driver] Starting (policy: %s)...\n", policy_name.c_str());
 
-    auto node = std::make_shared<AresDriverNode>(policy_name);
+    iox::runtime::PoshRuntime::initRuntime("ares_driver");
 
-    rclcpp::executors::MultiThreadedExecutor executor;
-    executor.add_node(node);
-    executor.spin();
+    auto core = std::make_unique<AresDriverCore>(std::string(POLICY_DIR), policy_name);
 
-    rclcpp::shutdown();
+    printf("[ARES Driver] kp: %s\n", FmtFloatVec(core->config_kp()).c_str());
+    printf("[ARES Driver] kd: %s\n", FmtFloatVec(core->config_kd()).c_str());
+    printf("[ARES Driver] torque_limits: %s\n", FmtFloatVec(core->config_torque()).c_str());
+    printf("[ARES Driver] gamepad_scale: %.2f\n", core->gamepad_scale());
+    printf("[ARES Driver] IMU: %s\n", core->imu_connected() ? "yes" : "no");
+
+    if (core->gamepad_connected())
+        printf("[ARES Driver] Gamepad: %s\n", core->gamepad_name().c_str());
+    else
+        printf("[ARES Driver] WARN: No gamepad at /dev/input/js0\n");
+
+    iox::popo::PublisherOptions pubOpts;
+    pubOpts.m_historyCapacity = 10;
+    iox::popo::Publisher<iox_msg::MotorFeedback> motorFbPub(
+        iox::capro::ServiceDescription{"rl_sar", "motor_feedback", ""}, pubOpts);
+    iox::popo::Publisher<iox_msg::Imu> imuPub(
+        iox::capro::ServiceDescription{"rl_sar", "imu", ""}, pubOpts);
+    iox::popo::Publisher<iox_msg::XboxVel> xboxPub(
+        iox::capro::ServiceDescription{"rl_sar", "xbox_vel", ""}, pubOpts);
+
+    iox::popo::SubscriberOptions subOpts;
+    subOpts.m_historyCapacity = 10;
+    iox::popo::Subscriber<iox_msg::MotorCommand> motorCmdSub(
+        iox::capro::ServiceDescription{"rl_sar", "motor_command", ""}, subOpts);
+    iox::popo::Subscriber<iox_msg::MotorParam> motorParamSub(
+        iox::capro::ServiceDescription{"rl_sar", "motor_param", ""}, subOpts);
+
+    printf("[ARES Driver] iceoryx transport ready\n");
+
+    auto feedbackLoop = std::make_shared<LoopFunc>("feedback", 0.01f, [&]() {
+        auto cmdResult = motorCmdSub.take();
+        if (cmdResult.has_value()) {
+            auto& sample = cmdResult.value();
+            const auto* cmd = sample.get();
+            if (cmd) {
+                std::array<float, AresDriverCore::NUM_JOINTS> target;
+                for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i)
+                    target[i] = cmd->position[i];
+                core->SetTopicCommand(target);
+            }
+        }
+
+        auto paramResult = motorParamSub.take();
+        if (paramResult.has_value()) {
+            auto& sample = paramResult.value();
+            const auto* param = sample.get();
+            if (param) {
+                std::vector<float> kp(param->kp, param->kp + AresDriverCore::NUM_JOINTS);
+                std::vector<float> kd(param->kd, param->kd + AresDriverCore::NUM_JOINTS);
+                std::vector<float> torque(param->torque, param->torque + AresDriverCore::NUM_JOINTS);
+                core->SetMotorParams(kp, kd, torque);
+                printf("[DRIVER] Motor params updated from iceoryx\n");
+            }
+        }
+
+        auto joint_states = core->GetTopicFeedback();
+        auto fbLoan = motorFbPub.loan();
+        if (fbLoan.has_value()) {
+            auto& loan = fbLoan.value();
+            for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i) {
+                loan->position[i] = joint_states.position[i];
+                loan->velocity[i] = joint_states.velocity[i];
+                loan->torque[i] = joint_states.torque[i];
+            }
+            loan.publish();
+        }
+
+        auto imu_data = core->GetImuData();
+        auto imuLoan = imuPub.loan();
+        if (imuLoan.has_value()) {
+            auto& loan = imuLoan.value();
+            for (int i = 0; i < 3; ++i) {
+                loan->angular_velocity[i] = imu_data.angular_velocity[i];
+                loan->projected_gravity[i] = imu_data.projected_gravity[i];
+            }
+            loan.publish();
+        }
+
+        auto gamepad = core->PollGamepad();
+        if (gamepad.connected) {
+            auto xboxLoan = xboxPub.loan();
+            if (xboxLoan.has_value()) {
+                auto& loan = xboxLoan.value();
+                loan->linear_x = gamepad.linear_x;
+                loan->linear_y = gamepad.linear_y;
+                loan->linear_z = gamepad.linear_z;
+                loan->angular_z = gamepad.angular_z;
+                loan.publish();
+            }
+        }
+    });
+
+    core->PrintModeHelp();
+    printf("[ARES Driver] iceoryx node started (Ctrl+C to quit)\n");
+
+    feedbackLoop->start();
+
+    while (g_running)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    feedbackLoop->shutdown();
+    printf("[ARES Driver] Stopped\n");
     return 0;
 }

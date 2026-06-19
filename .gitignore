@@ -1,6 +1,12 @@
 install/
 build/
 log/
+.deps/
+.cmake/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
 policy/ares_himloco/himloco/
 policy/dogv2_cts/cts/
 *.so

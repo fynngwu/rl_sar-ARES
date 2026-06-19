@@ -10,8 +10,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-add_compile_definitions(USE_ROS2)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -32,12 +30,7 @@ add_definitions(-DCMAKE_CURRENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_definitions(-DPOLICY_DIR="${PROJECT_ROOT_DIR}/policy")
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
-find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED)
-
-# NOTE: No "interfaces" package — ARES uses standard ROS2 messages only
+find_package(iceoryx_posh REQUIRED)
 
 # Inference Runtime
 set(INFERENCE_RUNTIME_DIR "${PROJECT_ROOT_DIR}/library/inference_runtime")
@@ -185,7 +178,7 @@ endif()
 # library for observation buffer
 add_library(observation_buffer library/core/observation_buffer/observation_buffer.cpp)
 
-# Static library for pure RL logic (no ROS2 dependency, fast compile)
+# Static library for pure RL logic (no transport dependency, fast compile)
 add_library(rl_core STATIC src/rl_core.cpp)
 target_include_directories(rl_core PUBLIC
     include
@@ -201,16 +194,14 @@ target_link_libraries(rl_core PUBLIC
     Threads::Threads
 )
 
-# executable for ARES RL inference node (ROS2 topic interface)
+# executable for ARES RL inference node (iceoryx transport)
 if(SYSTEM_TYPE STREQUAL "Linux")
     add_executable(ares src/rl_node.cpp src/keyboard_helper.cpp)
     target_link_libraries(ares
         rl_core
         ${YAML_CPP_LIBRARIES}
         Threads::Threads
-        rclcpp::rclcpp
-        sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
-        geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
+        iceoryx_posh::iceoryx_posh
     )
 
 if(DOG_DRIVER_LIB)
@@ -227,19 +218,16 @@ if(DOG_DRIVER_LIB)
         )
         target_link_libraries(ares_driver_node
             ares_driver_core
-            rclcpp::rclcpp
-            sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
-            geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
+            iceoryx_posh::iceoryx_posh
         )
         target_precompile_headers(ares_driver_node PRIVATE
-            <rclcpp/rclcpp.hpp>
-            <sensor_msgs/msg/joint_state.hpp>
-            <sensor_msgs/msg/imu.hpp>
-            <geometry_msgs/msg/twist.hpp>
+            <iceoryx_posh/popo/publisher.hpp>
+            <iceoryx_posh/popo/subscriber.hpp>
+            <iceoryx_posh/runtime/posh_runtime.hpp>
             <yaml-cpp/yaml.h>
         )
 
-        # IMU direct hardware test (no ROS2 dependency)
+        # IMU direct hardware test (no transport dependency)
         add_executable(test_imu_direct test/test_imu_direct.cpp)
         target_link_libraries(test_imu_direct
             ares_driver_core
