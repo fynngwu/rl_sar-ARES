@@ -18,6 +18,7 @@
 #include <mutex>
 
 #include <yaml-cpp/yaml.h>
+#include "keyboard_helper.hpp"
 #include "fsm.hpp"
 #include "observation_buffer.hpp"
 #include "vector_math.hpp"

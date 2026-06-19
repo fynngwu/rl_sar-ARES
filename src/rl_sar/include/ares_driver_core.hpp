@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "dog_driver.hpp"
+
 enum class DriverMode : uint8_t {
     DISABLE,
     STAND,
@@ -14,18 +16,10 @@ enum class DriverMode : uint8_t {
 
 class AresDriverCore {
 public:
-    static constexpr int NUM_JOINTS = 12;
+    static constexpr int NUM_JOINTS = DogDriver::NUM_JOINTS;
 
-    struct JointFeedback {
-        std::array<float, NUM_JOINTS> position{};
-        std::array<float, NUM_JOINTS> velocity{};
-        std::array<float, NUM_JOINTS> torque{};
-    };
-
-    struct ImuData {
-        std::array<float, 3> angular_velocity{};
-        std::array<float, 3> projected_gravity{};
-    };
+    using JointFeedback = DogDriver::JointState;
+    using ImuData = DogDriver::IMUData;
 
     struct GamepadCommand {
         bool connected = false;

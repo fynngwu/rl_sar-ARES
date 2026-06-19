@@ -114,6 +114,20 @@ private:
                      joint_pos.data(), joint_vel.data(), joint_torque.data());
     }
 
+    void PublishJointCommand(const std::vector<float>& positions)
+    {
+        sensor_msgs::msg::JointState cmd;
+        cmd.header.stamp = now();
+        const auto& limits = rl_.GetPositionLimits();
+        for (int i = 0; i < rl_.GetNumDofs(); ++i) {
+            float pos = positions[rl_.GetDriverToTopic()[i]];
+            if (!limits.empty() && static_cast<size_t>(i) < limits.size())
+                pos = std::clamp(pos, limits[i].first, limits[i].second);
+            cmd.position.push_back(pos);
+        }
+        motor_command_pub_->publish(cmd);
+    }
+
     void RobotControl()
     {
         int key = kbhit();
@@ -139,17 +153,7 @@ private:
         if (!rl_.IsInitialized()) return;
 
         if (key == '0' && rl_.GetState() != AresRL::State::STOPPED) {
-            sensor_msgs::msg::JointState cmd;
-            cmd.header.stamp = now();
-            const auto& default_pos = rl_.GetDefaultDofPos();
-            const auto& limits = rl_.GetPositionLimits();
-            for (int i = 0; i < rl_.GetNumDofs(); ++i) {
-                float pos = default_pos[rl_.GetDriverToTopic()[i]];
-                if (!limits.empty() && static_cast<size_t>(i) < limits.size())
-                    pos = std::clamp(pos, limits[i].first, limits[i].second);
-                cmd.position.push_back(pos);
-            }
-            motor_command_pub_->publish(cmd);
+            PublishJointCommand(rl_.GetDefaultDofPos());
             rl_.SetState(AresRL::State::STOPPED);
             printf("[RL] STOPPED\n");
             return;
@@ -162,20 +166,10 @@ private:
         if (!all_sensors_ready_) return;
         if (rl_.GetState() == AresRL::State::STOPPED) return;
 
-        sensor_msgs::msg::JointState cmd;
-        cmd.header.stamp = now();
         {
             Lock lock(output_mutex_);
-            const auto& target = rl_.GetTargetPositions();
-            const auto& limits = rl_.GetPositionLimits();
-            for (int i = 0; i < rl_.GetNumDofs(); ++i) {
-                float pos = target[rl_.GetDriverToTopic()[i]];
-                if (!limits.empty() && static_cast<size_t>(i) < limits.size())
-                    pos = std::clamp(pos, limits[i].first, limits[i].second);
-                cmd.position.push_back(pos);
-            }
+            PublishJointCommand(rl_.GetTargetPositions());
         }
-        motor_command_pub_->publish(cmd);
     }
 
     void PublishMotorParams()
