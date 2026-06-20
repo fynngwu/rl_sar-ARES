@@ -17,6 +17,7 @@
 #include <functional>
 #include <iomanip>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -106,6 +107,17 @@ private:
         for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i)
             target[i] = msg->position[i];
         core_->SetTopicCommand(target);
+
+        auto now = this->now();
+        if (!last_motor_cmd_log_time_ ||
+            (now - *last_motor_cmd_log_time_).seconds() >= 1.0) {
+            last_motor_cmd_log_time_ = now;
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Received /motor_command: [%.3f, %.3f, %.3f, ...] mode=%s",
+                target[0], target[1], target[2],
+                DriverModeName(core_->GetMode()));
+        }
     }
 
     void MotorParamCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
@@ -126,6 +138,7 @@ private:
     void FeedbackTimerCallback()
     {
         PublishRemoteCommand();
+        LogDriverState();
 
         auto joint_states = core_->GetTopicFeedback();
         sensor_msgs::msg::JointState feedback_msg;
@@ -222,7 +235,15 @@ private:
             RCLCPP_INFO(this->get_logger(), "Locomotion family selected.");
             break;
         case RemoteCommand::START_DREAMWAQ:
+        {
+            bool ok = core_->RequestModeChange(DriverMode::RL);
+            RCLCPP_INFO(
+                this->get_logger(),
+                "RequestModeChange(RL) result=%s, driver mode after=%s",
+                ok ? "ok" : "rejected",
+                DriverModeName(core_->GetMode()));
             break;
+        }
         case RemoteCommand::TOGGLE_RECORD:
             break;
         case RemoteCommand::NONE:
@@ -230,7 +251,7 @@ private:
         }
     }
 
-    RemoteCommand DetectRemoteCommand() const
+    RemoteCommand DetectRemoteCommand()
     {
         if (!core_->gamepad_connected())
             return RemoteCommand::NONE;
@@ -247,13 +268,20 @@ private:
         const bool rt = core_->GetGamepadAxis(5) > 0.5f;
 
         if (a || x || y || lb || rb || start || lt || rt) {
-            RCLCPP_INFO(
-                this->get_logger(),
-                "Gamepad state: A=%d X=%d Y=%d LB=%d RB=%d START=%d LT=%.3f RT=%.3f mode=%s",
-                a, x, y, lb, rb, start,
-                core_->GetGamepadAxis(2),
-                core_->GetGamepadAxis(5),
-                DriverModeName(core_->GetMode()));
+            std::ostringstream sig;
+            sig << a << x << y << lb << rb << start << lt << rt;
+            if (sig.str() != last_gamepad_signature_) {
+                last_gamepad_signature_ = sig.str();
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "Gamepad state changed: A=%d X=%d Y=%d LB=%d RB=%d START=%d LT=%.3f RT=%.3f mode=%s",
+                    a, x, y, lb, rb, start,
+                    core_->GetGamepadAxis(2),
+                    core_->GetGamepadAxis(5),
+                    DriverModeName(core_->GetMode()));
+            }
+        } else {
+            last_gamepad_signature_.clear();
         }
 
         if (rb && x)
@@ -271,6 +299,22 @@ private:
         return RemoteCommand::NONE;
     }
 
+    void LogDriverState()
+    {
+        auto now = this->now();
+        DriverMode mode = core_->GetMode();
+        if (mode != last_logged_mode_ ||
+            !last_state_log_time_ ||
+            (now - *last_state_log_time_).seconds() >= 1.0) {
+            last_logged_mode_ = mode;
+            last_state_log_time_ = now;
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Driver state: mode=%s",
+                DriverModeName(core_->GetMode()));
+        }
+    }
+
     std::unique_ptr<AresDriverCore> core_;
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
@@ -281,6 +325,10 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
     rclcpp::TimerBase::SharedPtr feedback_timer_;
     mutable RemoteCommand last_remote_cmd_{RemoteCommand::NONE};
+    std::optional<rclcpp::Time> last_state_log_time_;
+    std::optional<rclcpp::Time> last_motor_cmd_log_time_;
+    DriverMode last_logged_mode_{DriverMode::DISABLE};
+    std::string last_gamepad_signature_;
 };
 
 int main(int argc, char **argv)
