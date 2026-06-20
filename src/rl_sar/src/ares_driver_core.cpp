@@ -195,17 +195,8 @@ public:
 
     void CommandLoop()
     {
-        // --- Detect initial mode ---
-        auto joint_states = driver_->GetJointStates();
-        bool all_near_zero = true;
-        for (int i = 0; i < NUM_JOINTS; ++i) {
-            if (std::abs(joint_states.position[i]) > 0.1f)
-                all_near_zero = false;
-        }
-
-        DriverMode initial = DriverMode::STAND;
-        if (all_near_zero)
-            initial = DriverMode::RL;
+        // Start in DISABLE so the robot stays de-energized until an explicit stand command.
+        DriverMode initial = DriverMode::DISABLE;
         mode_ = initial;
 
         printf("\n[MODE] Initial state: %s\n", mode_name(initial));
