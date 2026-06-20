@@ -113,6 +113,17 @@ private:
         for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i)
             target[i] = msg->position[i];
         core_->SetTopicCommand(target);
+
+        if (pending_rl_enable_ && core_->GetMode() == DriverMode::STAND) {
+            bool ok = core_->RequestModeChange(DriverMode::RL);
+            RCLCPP_INFO(
+                this->get_logger(),
+                "First /motor_command received after start request. RequestModeChange(RL)=%s mode=%s",
+                ok ? "ok" : "rejected",
+                DriverModeName(core_->GetMode()));
+            if (ok)
+                pending_rl_enable_ = false;
+        }
     }
 
     void MotorParamCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
@@ -193,15 +204,28 @@ private:
 
         switch (cmd) {
         case RemoteCommand::RECOVER_STAND:
+            pending_rl_enable_ = false;
             (void)core_->RequestModeChange(DriverMode::STAND);
             break;
         case RemoteCommand::START_DREAMWAQ:
-            (void)core_->RequestModeChange(DriverMode::RL);
+            if (core_->GetMode() != DriverMode::STAND) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "Ignoring RL start because driver mode is %s, expected STAND",
+                    DriverModeName(core_->GetMode()));
+            } else {
+                pending_rl_enable_ = true;
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "RL start armed. Waiting for first /motor_command before switching driver to RL.");
+            }
             break;
         case RemoteCommand::DISABLE:
+            pending_rl_enable_ = false;
             (void)core_->RequestModeChange(DriverMode::DISABLE);
             break;
         case RemoteCommand::DAMPING:
+            pending_rl_enable_ = false;
             (void)core_->RequestModeChange(DriverMode::DAMPING);
             break;
         case RemoteCommand::SELECT_LOCOMOTION:
@@ -263,6 +287,7 @@ private:
     RemoteCommand last_remote_cmd_{RemoteCommand::NONE};
     std::optional<rclcpp::Time> last_state_log_time_;
     DriverMode last_logged_mode_{DriverMode::DISABLE};
+    bool pending_rl_enable_{false};
 };
 
 int main(int argc, char **argv)

@@ -316,7 +316,6 @@ public:
         if (tgt == cur)
             return;
 
-        std::lock_guard<std::mutex> lock(mode_mutex_);
         (void)RequestModeChange(tgt);
     }
 
