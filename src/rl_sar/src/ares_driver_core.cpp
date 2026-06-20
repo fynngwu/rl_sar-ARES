@@ -149,16 +149,91 @@ public:
     bool RequestModeChange(DriverMode target)
     {
         std::lock_guard<std::mutex> lock(mode_mutex_);
-        return RequestModeChangeLocked(target);
+        DriverMode cur = mode_.load();
+        if (target == cur)
+            return true;
+
+        if (!transition_allowed(cur, target)) {
+            printf("[MODE] Cannot transition from %s to %s\n",
+                   mode_name(cur), mode_name(target));
+            return false;
+        }
+
+        printf("[MODE] %s → %s\n", mode_name(cur), mode_name(target));
+        mode_ = target;
+
+        switch (target) {
+        case DriverMode::STAND:
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            driver_->EnableAll();
+            {
+                auto states = driver_->GetJointStates();
+                stand_start_pos_ = states.position;
+            }
+            stand_step_ = 0;
+            stand_active_ = true;
+            break;
+        case DriverMode::RL:
+            stand_active_ = false;
+            break;
+        case DriverMode::DISABLE:
+            driver_->DisableAll();
+            stand_active_ = false;
+            break;
+        case DriverMode::DAMPING:
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, 0.0f, 4.0f);
+            driver_->EnableAll();
+            driver_->SetAllJointPositions(std::array<float, NUM_JOINTS>{});
+            stand_active_ = false;
+            break;
+        }
+
+        return true;
     }
 
     void CommandLoop()
     {
-        mode_ = DriverMode::DISABLE;
-        driver_->DisableAll();
+        // --- Detect initial mode ---
+        auto joint_states = driver_->GetJointStates();
+        bool all_near_zero = true;
+        for (int i = 0; i < NUM_JOINTS; ++i) {
+            if (std::abs(joint_states.position[i]) > 0.1f)
+                all_near_zero = false;
+        }
 
-        printf("\n[MODE] Initial state: %s\n", mode_name(mode_.load()));
+        DriverMode initial = DriverMode::STAND;
+        if (all_near_zero)
+            initial = DriverMode::RL;
+        mode_ = initial;
+
+        printf("\n[MODE] Initial state: %s\n", mode_name(initial));
         printf("Keys: [s] Stand  [r] RL  [d] Disable\n\n");
+
+        if (initial == DriverMode::RL) {
+            while (running_ && !received_first_command_.load()) {
+                int key = kbhit();
+                if (key > 0) {
+                    key = std::tolower(key);
+                    handle_key_command(key);
+                    if (mode_ != DriverMode::RL)
+                        break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (!running_) return;
+        } else if (initial == DriverMode::STAND) {
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            driver_->EnableAll();
+            {
+                auto states = driver_->GetJointStates();
+                stand_start_pos_ = states.position;
+            }
+            stand_step_ = 0;
+            stand_active_ = true;
+        }
 
         // --- Main loop ---
         constexpr auto RL_PERIOD = std::chrono::milliseconds(5);
@@ -242,7 +317,7 @@ public:
             return;
 
         std::lock_guard<std::mutex> lock(mode_mutex_);
-        RequestModeChangeLocked(tgt);
+        (void)RequestModeChange(tgt);
     }
 
     static bool transition_allowed(DriverMode from, DriverMode to)
@@ -269,55 +344,6 @@ public:
         case DriverMode::DAMPING: return "DAMPING";
         }
         return "???";
-    }
-
-    bool RequestModeChangeLocked(DriverMode target)
-    {
-        DriverMode cur = mode_.load();
-        if (target == cur)
-            return true;
-
-        if (!transition_allowed(cur, target)) {
-            printf("[MODE] Cannot transition from %s to %s\n",
-                   mode_name(cur), mode_name(target));
-            return false;
-        }
-
-        printf("[MODE] %s → %s\n", mode_name(cur), mode_name(target));
-        mode_ = target;
-
-        switch (target) {
-        case DriverMode::STAND:
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
-            driver_->EnableAll();
-            {
-                auto states = driver_->GetJointStates();
-                stand_start_pos_ = states.position;
-            }
-            stand_step_ = 0;
-            stand_active_ = true;
-            break;
-        case DriverMode::RL:
-            stand_active_ = false;
-            break;
-        case DriverMode::DISABLE:
-            driver_->DisableAll();
-            stand_active_ = false;
-            break;
-        case DriverMode::DAMPING:
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, 0.0f, 4.0f);
-            driver_->EnableAll();
-            {
-                std::array<float, NUM_JOINTS> target{};
-                driver_->SetAllJointPositions(target);
-            }
-            stand_active_ = false;
-            break;
-        }
-
-        return true;
     }
 
     std::unique_ptr<DogDriver> driver_;
