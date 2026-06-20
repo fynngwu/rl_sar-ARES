@@ -1,12 +1,16 @@
 #include "rl_core.hpp"
-#include "joint_names.hpp"
-#include "yaml_utils.hpp"
 #include <yaml-cpp/yaml.h>
 
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+
+static constexpr const char* kJointNames[12] = {
+    "FL_HipA", "RL_HipA", "FR_HipA", "RR_HipA",
+    "FL_HipF", "RL_HipF", "FR_HipF", "RR_HipF",
+    "FL_Knee", "RL_Knee", "FR_Knee", "RR_Knee"
+};
 
 AresRL::AresRL() {}
 
@@ -44,33 +48,51 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
             model_fn = rc["model_name"].as<std::string>();
 
         if (rc["observations"]) {
-            observations_ = yaml_utils::LoadStringArray(rc["observations"]);
+            const auto& list = rc["observations"];
+            observations_.clear();
+            for (const auto& item : list)
+                observations_.push_back(item.as<std::string>());
         }
 
         if (rc["observations_history"]) {
-            obs_history_ = yaml_utils::LoadIntArray(rc["observations_history"]);
-        }
-        if (rc["observations_history_priority"]) {
-            observations_history_priority_ = rc["observations_history_priority"].as<std::string>();
+            obs_history_.clear();
+            for (const auto& step : rc["observations_history"])
+                obs_history_.push_back(step.as<int>());
         }
 
-        clip_actions_upper_ = yaml_utils::LoadFloatArray(rc["clip_actions_upper"]);
-        clip_actions_lower_ = yaml_utils::LoadFloatArray(rc["clip_actions_lower"]);
-        commands_scale_     = yaml_utils::LoadFloatArray(rc["commands_scale"]);
-        default_dof_pos_    = yaml_utils::LoadFloatArray(rc["default_dof_pos"]);
+        auto read_floats = [&](const char* key) {
+            std::vector<float> result;
+            if (rc[key])
+                for (const auto& item : rc[key])
+                    result.push_back(item.as<float>());
+            return result;
+        };
+        clip_actions_upper_ = read_floats("clip_actions_upper");
+        clip_actions_lower_ = read_floats("clip_actions_lower");
+        commands_scale_     = read_floats("commands_scale");
+        default_dof_pos_    = read_floats("default_dof_pos");
 
         if (rc["topic_to_driver"]) {
-            auto vec = yaml_utils::LoadIntArray(rc["topic_to_driver"]);
-            for (size_t i = 0; i < vec.size() && i < 12; ++i)
-                topic_to_driver_[i] = vec[i];
+            auto order = rc["topic_to_driver"];
+            for (int i = 0; i < 12; ++i)
+                topic_to_driver_[i] = order[i].as<int>();
             for (int i = 0; i < 12; ++i)
                 driver_to_topic_[topic_to_driver_[i]] = i;
         }
 
-        current_kp_            = yaml_utils::LoadScalarOrArray(rc["fixed_kp"], num_of_dofs_);
-        current_kd_            = yaml_utils::LoadScalarOrArray(rc["fixed_kd"], num_of_dofs_);
-        current_torque_limits_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], num_of_dofs_);
-        action_scale_          = yaml_utils::LoadScalarOrArray(rc["action_scale"], num_of_dofs_);
+        auto read_scalar_or_list = [&](const YAML::Node& node) -> std::vector<float> {
+            if (node.IsSequence()) {
+                std::vector<float> values;
+                for (const auto& item : node)
+                    values.push_back(item.as<float>());
+                return values;
+            }
+            return std::vector<float>(num_of_dofs_, node.as<float>());
+        };
+        current_kp_            = read_scalar_or_list(rc["fixed_kp"]);
+        current_kd_            = read_scalar_or_list(rc["fixed_kd"]);
+        current_torque_limits_ = read_scalar_or_list(rc["torque_limits"]);
+        action_scale_          = read_scalar_or_list(rc["action_scale"]);
 
         // Load position limits from YAML
         position_limits_.clear();
@@ -133,7 +155,7 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
     int history_len = 1;
     if (!obs_history_.empty())
         history_len = *std::max_element(obs_history_.begin(), obs_history_.end()) + 1;
-    history_obs_buf_ = ObservationBuffer(1, obs_dims_, history_len, observations_history_priority_);
+    history_obs_buf_ = ObservationBuffer(1, obs_dims_, history_len, "time");
 
     int total_obs_dim = 0;
     for (int dim : obs_dims_) total_obs_dim += dim;
@@ -162,56 +184,15 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
     printf("[RL]   action_scale:    %s\n", FormatVector(action_scale_).c_str());
     printf("[RL]   commands_scale:  %s\n", FormatVector(commands_scale_).c_str());
     printf("[RL]   observations:    %s\n", FormatStringVector(observations_).c_str());
-    printf("[RL]   obs_history:     %s  priority=%s\n",
-           FormatIntVector(obs_history_).c_str(),
-           observations_history_priority_.c_str());
 
     if (!position_limits_.empty()) {
         printf("[RL]   position_limits (%zu joints):\n", position_limits_.size());
         for (size_t i = 0; i < position_limits_.size() && i < 12; ++i)
             printf("[RL]     [%zu] %-12s  lower=%.6f  upper=%.6f\n",
-                   i, kJointNamesByDof[i], position_limits_[i].first, position_limits_[i].second);
+                   i, kJointNames[i], position_limits_[i].first, position_limits_[i].second);
     }
 
     return true;
-}
-
-void AresRL::PrepareForStart(const float imu_gyro[3], const float imu_gravity[3],
-                             const float commands[3], const float joint_pos[12],
-                             const float joint_vel[12], const float joint_torque[12])
-{
-    if (!rl_init_done_)
-        return;
-
-    obs_.lin_vel = {0, 0, 0};
-    obs_.ang_vel = {imu_gyro[0], imu_gyro[1], imu_gyro[2]};
-    obs_.gravity_vec = {imu_gravity[0], imu_gravity[1], imu_gravity[2]};
-    obs_.commands = {commands[0], commands[1], commands[2]};
-    obs_.base_quat = {1, 0, 0, 0};
-    obs_.actions.assign(num_of_dofs_, 0.0f);
-
-    for (int i = 0; i < num_of_dofs_; ++i) {
-        obs_.dof_pos[i] = joint_pos[i];
-        obs_.dof_vel[i] = joint_vel[i];
-    }
-
-    snap_joint_pos_.assign(joint_pos, joint_pos + num_of_dofs_);
-    snap_joint_vel_.assign(joint_vel, joint_vel + num_of_dofs_);
-    snap_joint_torque_.assign(joint_torque, joint_torque + num_of_dofs_);
-    latest_target_pos_.assign(joint_pos, joint_pos + num_of_dofs_);
-
-    inference_count_ = 0;
-    inference_time_ms_ = 0.0;
-    last_print_time_.reset();
-
-    std::vector<float> obs_vec = ComputeObservation(obs_);
-    if (!obs_history_.empty()) {
-        history_obs_buf_.reset({0}, obs_vec);
-        history_obs_ = history_obs_buf_.get_obs_vec(obs_history_);
-    }
-
-    printf("[RL] Runtime reset for start. hold_target=%s\n",
-           FormatVector(latest_target_pos_).c_str());
 }
 
 void AresRL::RunModel(const float imu_gyro[3], const float imu_gravity[3],
@@ -397,18 +378,6 @@ std::string AresRL::FormatVector(const std::vector<float>& values) const
     return oss.str();
 }
 
-std::string AresRL::FormatIntVector(const std::vector<int>& values) const
-{
-    std::ostringstream oss;
-    oss << "[";
-    for (size_t i = 0; i < values.size(); ++i) {
-        if (i > 0) oss << ", ";
-        oss << values[i];
-    }
-    oss << "]";
-    return oss.str();
-}
-
 std::string AresRL::FormatStringVector(const std::vector<std::string>& values) const
 {
     std::ostringstream oss;
@@ -425,10 +394,10 @@ void AresRL::WriteCsvHeader()
 {
     csv_file_ << "step";
     for (int i = 0; i < num_of_dofs_; ++i)
-        csv_file_ << "," << kJointNamesByDof[i] << "_pos,"
-                  << kJointNamesByDof[i] << "_vel,"
-                  << kJointNamesByDof[i] << "_torque,"
-                  << kJointNamesByDof[i] << "_target";
+        csv_file_ << "," << kJointNames[i] << "_pos,"
+                  << kJointNames[i] << "_vel,"
+                  << kJointNames[i] << "_torque,"
+                  << kJointNames[i] << "_target";
     csv_file_ << "\n";
 }
 
@@ -481,7 +450,7 @@ void AresRL::PrintStatus()
         for (int i = 0; i < num_of_dofs_; ++i) {
             int t = driver_to_topic_[i];
             printf("%-12s %10.4f %10.4f %10.4f %10.4f\n",
-                   kJointNamesByDof[i],
+                   kJointNames[i],
                    snap_joint_pos_[t], snap_joint_vel_[t],
                    snap_joint_torque_[t], latest_target_pos_[t]);
         }

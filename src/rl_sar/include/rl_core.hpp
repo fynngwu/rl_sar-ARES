@@ -20,9 +20,6 @@ public:
     ~AresRL();
 
     bool Init(const std::string& policy_dir, const std::string& policy_name);
-    void PrepareForStart(const float imu_gyro[3], const float imu_gravity[3],
-                         const float commands[3], const float joint_pos[12],
-                         const float joint_vel[12], const float joint_torque[12]);
 
     void RunModel(const float imu_gyro[3], const float imu_gravity[3],
                   const float commands[3], const float joint_pos[12],
@@ -66,7 +63,6 @@ private:
     void ComputeObsDims();
     std::string FindLatestOnnx(const std::string& dir);
     std::string FormatVector(const std::vector<float>& values) const;
-    std::string FormatIntVector(const std::vector<int>& values) const;
     std::string FormatStringVector(const std::vector<std::string>& values) const;
     void PrintStatus();
 
@@ -79,7 +75,6 @@ private:
 
     std::vector<std::string> observations_;
     std::vector<int> obs_history_;
-    std::string observations_history_priority_{"time"};
     std::vector<float> action_scale_, commands_scale_, default_dof_pos_;
     std::vector<float> clip_actions_upper_, clip_actions_lower_;
     int    num_of_dofs_{12};

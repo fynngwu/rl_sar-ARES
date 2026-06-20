@@ -116,9 +116,9 @@ std::vector<float> ObservationBuffer::get_obs_vec(std::vector<int> obs_ids)
     int output_size = 0;
     for (int obs_id : obs_ids)
     {
-        if (obs_id >= 0 && obs_id < history_length)
+        if (obs_id >= 0 && obs_id < static_cast<int>(obs_dims.size()))
         {
-            output_size += num_obs_total;
+            output_size += obs_dims[obs_id];
         }
     }
 
@@ -129,7 +129,7 @@ std::vector<float> ObservationBuffer::get_obs_vec(std::vector<int> obs_ids)
 
     // Create output vector
     std::vector<float> output;
-    output.reserve(num_envs * obs_ids.size() * output_size);
+    output.reserve(num_envs * history_length * output_size);
 
     if (this->priority == "time")
     {
