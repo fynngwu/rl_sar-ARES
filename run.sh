@@ -3,7 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
-POLICY="${1:-dogv2_cts/cts}"
+POLICY="${1:-dream_waq/dream_waq}"
 
 trap 'kill 0; exit 0' SIGINT SIGTERM
 

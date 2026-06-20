@@ -2,10 +2,12 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "geometry_msgs/msg/twist.hpp"
+#include "std_msgs/msg/u_int8.hpp"
 
 #include "rl_core.hpp"
 #include "loop.hpp"
 #include "keyboard_helper.hpp"
+#include "remote_command.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -29,6 +31,8 @@ public:
         using namespace std::placeholders;
         motor_command_pub_ = create_publisher<sensor_msgs::msg::JointState>("/motor_command", 10);
         motor_param_pub_   = create_publisher<sensor_msgs::msg::JointState>("/motor_param_update", 1);
+        remote_cmd_sub_ = create_subscription<std_msgs::msg::UInt8>(
+            "/remote_command", 10, std::bind(&ARSNode::RemoteCommandCallback, this, _1));
         motor_feedback_sub_ = create_subscription<sensor_msgs::msg::JointState>(
             "/motor_feedback", 10, std::bind(&ARSNode::MotorFeedbackCallback, this, _1));
         imu_sub_  = create_subscription<sensor_msgs::msg::Imu>(
@@ -43,17 +47,14 @@ public:
                 policy_map_[kv.first.as<std::string>()[0]] = kv.second.as<std::string>();
         }
 
-        if (!policy_name.empty()) {
-            std::string selected = policy_name;
-            bool policy_found = false;
-            for (const auto& [key, name] : policy_map_)
-                if (name == selected) { policy_found = true; break; }
-            if (!policy_found && !policy_map_.empty()) {
-                selected = policy_map_.begin()->second;
-                RCLCPP_WARN(get_logger(), "Policy not found, using first: %s", selected.c_str());
-            }
-            if (!InitRL(selected)) { RCLCPP_ERROR(get_logger(), "RL init failed!"); return; }
+        selected_policy_ = "dream_waq/dream_waq";
+        if (!policy_name.empty())
+            selected_policy_ = policy_name;
+        if (!InitRL(selected_policy_)) {
+            RCLCPP_ERROR(get_logger(), "RL init failed!");
+            return;
         }
+        rl_.SetState(AresRL::State::STOPPED);
 
         loop_control_ = std::make_shared<LoopFunc>("loop_control", rl_.GetDt(),
                                                      std::bind(&ARSNode::RobotControl, this));
@@ -62,9 +63,9 @@ public:
         loop_control_->start();  loop_rl_->start();
 
         std::string help = "\n=== ARES RL Controls ===\n";
-        for (const auto& [key, name] : policy_map_)
-            help += "  [" + std::string(1, key) + "] " + name + "\n";
-        help += "  [0] STOP\n  Switch policy from STOPPED\n\n";
+        help += "  LOGIC remote enabled\n";
+        help += "  dream_waq/dream_waq is fixed as the locomotion policy\n";
+        help += "  [0] STOP (keyboard fallback)\n\n";
         printf("%s", help.c_str());
     }
 
@@ -132,23 +133,6 @@ private:
     {
         int key = kbhit();
 
-        // Policy switch: from uninitialized or from STOPPED
-        if (policy_map_.count(static_cast<char>(key)) &&
-            (!rl_.IsInitialized() || rl_.GetState() == AresRL::State::STOPPED)) {
-            auto it = policy_map_.find(static_cast<char>(key));
-            if (it != policy_map_.end()) {
-                printf("[RL] Loading %s ...\n", it->second.c_str());
-                if (InitRL(it->second)) {
-                    all_sensors_ready_ = true;
-                    rl_.SetState(AresRL::State::RUNNING);
-                    printf("[RL] RUNNING (%s)\n", it->second.c_str());
-                } else {
-                    printf("[RL] Init FAILED\n");
-                }
-            }
-            return;
-        }
-
         // Not initialized — nothing more to do
         if (!rl_.IsInitialized()) return;
 
@@ -169,6 +153,57 @@ private:
         {
             Lock lock(output_mutex_);
             PublishJointCommand(rl_.GetTargetPositions());
+        }
+    }
+
+    void RemoteCommandCallback(const std_msgs::msg::UInt8::SharedPtr msg)
+    {
+        RemoteCommand cmd = static_cast<RemoteCommand>(msg->data);
+        switch (cmd) {
+        case RemoteCommand::RECOVER_STAND:
+            if (rl_.GetState() != AresRL::State::STOPPED) {
+                PublishJointCommand(rl_.GetDefaultDofPos());
+                rl_.SetState(AresRL::State::STOPPED);
+                RCLCPP_INFO(get_logger(), "Remote: stop policy and recover stand");
+            }
+            locomotion_selected_ = false;
+            break;
+        case RemoteCommand::SELECT_LOCOMOTION:
+            locomotion_selected_ = true;
+            RCLCPP_INFO(get_logger(), "Remote: locomotion family armed");
+            break;
+        case RemoteCommand::START_DREAMWAQ:
+            if (!locomotion_selected_) {
+                RCLCPP_WARN(get_logger(), "Remote: locomotion family not selected, ignoring dreamwaq start");
+                break;
+            }
+            if (!rl_.IsInitialized() && !InitRL(selected_policy_)) {
+                RCLCPP_ERROR(get_logger(), "Remote: failed to initialize %s", selected_policy_.c_str());
+                break;
+            }
+            if (rl_.GetState() == AresRL::State::RUNNING)
+                break;
+            PublishMotorParams();
+            all_sensors_ready_ = true;
+            rl_.SetState(AresRL::State::RUNNING);
+            RCLCPP_INFO(get_logger(), "Remote: RUNNING (%s)", selected_policy_.c_str());
+            break;
+        case RemoteCommand::DISABLE:
+        case RemoteCommand::DAMPING:
+            if (rl_.GetState() != AresRL::State::STOPPED) {
+                PublishJointCommand(rl_.GetDefaultDofPos());
+                rl_.SetState(AresRL::State::STOPPED);
+            }
+            break;
+        case RemoteCommand::TOGGLE_RECORD:
+            if (rl_.GetState() == AresRL::State::RUNNING) {
+                rl_.ToggleRecording();
+            } else {
+                RCLCPP_WARN(get_logger(), "Remote: recording toggle ignored because policy is not running");
+            }
+            break;
+        case RemoteCommand::NONE:
+            break;
         }
     }
 
@@ -231,6 +266,7 @@ private:
     AresRL rl_;
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_command_pub_, motor_param_pub_;
+    rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr remote_cmd_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_sub_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_sub_;
@@ -245,6 +281,8 @@ private:
     bool all_sensors_ready_{false};
 
     std::map<char, std::string> policy_map_;
+    std::string selected_policy_;
+    bool locomotion_selected_{false};
 };
 
 int main(int argc, char** argv)
@@ -252,7 +290,7 @@ int main(int argc, char** argv)
     rclcpp::init(argc, argv);
     // Empty policy name → start in STOP state, load on key press
     auto node = std::make_shared<ARSNode>(
-        argc > 1 ? argv[1] : "");
+        argc > 1 ? argv[1] : "dream_waq/dream_waq");
     rclcpp::executors::MultiThreadedExecutor exec;
     exec.add_node(node);
     exec.spin();

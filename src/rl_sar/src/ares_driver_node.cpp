@@ -6,9 +6,11 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "geometry_msgs/msg/twist.hpp"
+#include "std_msgs/msg/u_int8.hpp"
 
 #include "ares_driver_core.hpp"
 #include "joint_names.hpp"
+#include "remote_command.hpp"
 
 #include <array>
 #include <chrono>
@@ -41,6 +43,7 @@ public:
         motor_feedback_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/motor_feedback", 10);
         imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("/imu/data", 10);
         xbox_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/xbox_vel", 10);
+        remote_cmd_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/remote_command", 10);
 
         motor_command_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
             "/motor_command", 10,
@@ -97,6 +100,8 @@ private:
 
     void FeedbackTimerCallback()
     {
+        PublishRemoteCommand();
+
         auto joint_states = core_->GetTopicFeedback();
         sensor_msgs::msg::JointState feedback_msg;
         feedback_msg.header.stamp = this->now();
@@ -132,20 +137,90 @@ private:
         }
     }
 
+    void PublishRemoteCommand()
+    {
+        RemoteCommand cmd = DetectRemoteCommand();
+        if (cmd == RemoteCommand::NONE) {
+            last_remote_cmd_ = RemoteCommand::NONE;
+            return;
+        }
+
+        if (cmd == last_remote_cmd_)
+            return;
+
+        last_remote_cmd_ = cmd;
+
+        std_msgs::msg::UInt8 msg;
+        msg.data = static_cast<uint8_t>(cmd);
+        remote_cmd_pub_->publish(msg);
+
+        switch (cmd) {
+        case RemoteCommand::RECOVER_STAND:
+            core_->RequestModeChange(DriverMode::STAND);
+            break;
+        case RemoteCommand::DISABLE:
+            core_->RequestModeChange(DriverMode::DISABLE);
+            break;
+        case RemoteCommand::DAMPING:
+            core_->RequestModeChange(DriverMode::DAMPING);
+            RCLCPP_WARN(this->get_logger(), "Damping mode is reserved and may change in a later version.");
+            break;
+        case RemoteCommand::SELECT_LOCOMOTION:
+            RCLCPP_INFO(this->get_logger(), "Locomotion family selected.");
+            break;
+        case RemoteCommand::START_DREAMWAQ:
+            break;
+        case RemoteCommand::TOGGLE_RECORD:
+            break;
+        case RemoteCommand::NONE:
+            break;
+        }
+    }
+
+    RemoteCommand DetectRemoteCommand() const
+    {
+        if (!core_->gamepad_connected())
+            return RemoteCommand::NONE;
+
+        const bool a = core_->GetGamepadButton(0);
+        const bool x = core_->GetGamepadButton(3);
+        const bool y = core_->GetGamepadButton(2);
+        const bool lb = core_->GetGamepadButton(4);
+        const bool rb = core_->GetGamepadButton(5);
+        const bool start = core_->GetGamepadButton(7);
+        const bool lt = core_->GetGamepadAxis(2) > 0.5f;
+
+        if (rb && x)
+            return RemoteCommand::DISABLE;
+        if (lb && rb)
+            return RemoteCommand::DAMPING;
+        if (lb && start)
+            return RemoteCommand::TOGGLE_RECORD;
+        if (lb && a)
+            return RemoteCommand::RECOVER_STAND;
+        if (lb && y)
+            return RemoteCommand::SELECT_LOCOMOTION;
+        if (lt && y)
+            return RemoteCommand::START_DREAMWAQ;
+        return RemoteCommand::NONE;
+    }
+
     std::unique_ptr<AresDriverCore> core_;
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_pub_;
+    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr remote_cmd_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_command_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
     rclcpp::TimerBase::SharedPtr feedback_timer_;
+    mutable RemoteCommand last_remote_cmd_{RemoteCommand::NONE};
 };
 
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    std::string policy_name = (argc > 1) ? argv[1] : "ares_himloco/himloco";
+    std::string policy_name = (argc > 1) ? argv[1] : "dream_waq/dream_waq";
     RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node (policy: %s)...", policy_name.c_str());
 
     auto node = std::make_shared<AresDriverNode>(policy_name);
