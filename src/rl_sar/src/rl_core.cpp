@@ -57,7 +57,9 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
         default_dof_pos_    = yaml_utils::LoadFloatArray(rc["default_dof_pos"]);
 
         if (rc["topic_to_driver"]) {
-            topic_to_driver_ = yaml_utils::LoadIntArray(rc["topic_to_driver"]);
+            auto vec = yaml_utils::LoadIntArray(rc["topic_to_driver"]);
+            for (size_t i = 0; i < vec.size() && i < 12; ++i)
+                topic_to_driver_[i] = vec[i];
             for (int i = 0; i < 12; ++i)
                 driver_to_topic_[topic_to_driver_[i]] = i;
         }
@@ -162,7 +164,7 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
         printf("[RL]   position_limits (%zu joints):\n", position_limits_.size());
         for (size_t i = 0; i < position_limits_.size() && i < 12; ++i)
             printf("[RL]     [%zu] %-12s  lower=%.6f  upper=%.6f\n",
-                   i, kJointNames[i], position_limits_[i].first, position_limits_[i].second);
+                   i, kJointNamesByDof[i], position_limits_[i].first, position_limits_[i].second);
     }
 
     return true;
@@ -367,10 +369,10 @@ void AresRL::WriteCsvHeader()
 {
     csv_file_ << "step";
     for (int i = 0; i < num_of_dofs_; ++i)
-        csv_file_ << "," << kJointNames[i] << "_pos,"
-                  << kJointNames[i] << "_vel,"
-                  << kJointNames[i] << "_torque,"
-                  << kJointNames[i] << "_target";
+        csv_file_ << "," << kJointNamesByDof[i] << "_pos,"
+                  << kJointNamesByDof[i] << "_vel,"
+                  << kJointNamesByDof[i] << "_torque,"
+                  << kJointNamesByDof[i] << "_target";
     csv_file_ << "\n";
 }
 
