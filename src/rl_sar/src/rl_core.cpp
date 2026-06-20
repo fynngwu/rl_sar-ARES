@@ -50,6 +50,9 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
         if (rc["observations_history"]) {
             obs_history_ = yaml_utils::LoadIntArray(rc["observations_history"]);
         }
+        if (rc["observations_history_priority"]) {
+            observations_history_priority_ = rc["observations_history_priority"].as<std::string>();
+        }
 
         clip_actions_upper_ = yaml_utils::LoadFloatArray(rc["clip_actions_upper"]);
         clip_actions_lower_ = yaml_utils::LoadFloatArray(rc["clip_actions_lower"]);
@@ -130,7 +133,7 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
     int history_len = 1;
     if (!obs_history_.empty())
         history_len = *std::max_element(obs_history_.begin(), obs_history_.end()) + 1;
-    history_obs_buf_ = ObservationBuffer(1, obs_dims_, history_len, "time");
+    history_obs_buf_ = ObservationBuffer(1, obs_dims_, history_len, observations_history_priority_);
 
     int total_obs_dim = 0;
     for (int dim : obs_dims_) total_obs_dim += dim;
@@ -159,6 +162,9 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
     printf("[RL]   action_scale:    %s\n", FormatVector(action_scale_).c_str());
     printf("[RL]   commands_scale:  %s\n", FormatVector(commands_scale_).c_str());
     printf("[RL]   observations:    %s\n", FormatStringVector(observations_).c_str());
+    printf("[RL]   obs_history:     %s  priority=%s\n",
+           FormatIntVector(obs_history_).c_str(),
+           observations_history_priority_.c_str());
 
     if (!position_limits_.empty()) {
         printf("[RL]   position_limits (%zu joints):\n", position_limits_.size());
@@ -383,6 +389,18 @@ std::string AresRL::FormatVector(const std::vector<float>& values) const
 {
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(4) << "[";
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << values[i];
+    }
+    oss << "]";
+    return oss.str();
+}
+
+std::string AresRL::FormatIntVector(const std::vector<int>& values) const
+{
+    std::ostringstream oss;
+    oss << "[";
     for (size_t i = 0; i < values.size(); ++i) {
         if (i > 0) oss << ", ";
         oss << values[i];
