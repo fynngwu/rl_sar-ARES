@@ -12,13 +12,39 @@ ARES 四足机器人 RL 策略推理。基于 [rl_sar](https://github.com/fan-zi
 ./build.sh
 
 # 3. 分别在两个终端运行
-ares_driver_node          # 终端 1 — 驱动 + 状态机
-ares                      # 终端 2 — RL 推理
+ares_driver_node dream_waq/dream_waq   # 终端 1 — 驱动 + 状态机
+ares dream_waq/dream_waq               # 终端 2 — RL 推理
 ```
 
 编译后二进制文件安装到 `~/.local/bin/`。
 
-通过键盘（或手柄，见下文）选择策略和模式。Ctrl+C 停止。
+当前默认接入 `dream_waq/dream_waq` 作为唯一 locomotion policy。开机后默认处于 `DISABLE`，通过 LOGIC 手柄进入站立、启动策略、停止策略、录制数据等。Ctrl+C 停止。
+
+## 遥控指令
+
+当前使用 LOGIC USB 手柄（`/dev/input/js0`）遥控机器人，按键定义参考 `Loco_Intern_SDK`。
+
+### 遥控指令速查
+
+| 组合键 | 功能 | 说明 |
+|--------|------|------|
+| `LB + A` | 站立 / 恢复站立 | 从 `DISABLE` 进入 `STAND`；如果当前正在运行策略，则先停策略再回站立 |
+| `LB + Y` | 选择 locomotion family | 作为启动 locomotion policy 的前置选择 |
+| `LT + Y` | 启动 `dream_waq/dream_waq` | 仅接入这一支 locomotion policy；推荐先执行 `LB + Y`，并确保当前已经站立 |
+| `RB + X` | Disable | 全局失能，直接进入 `DISABLE` |
+| `LB + RB` | Damping | 当前版本先预留 / 接入阻尼入口 |
+| `LB + START` | 录制数据开关 | 运行中切换 CSV 录制；未运行策略时按下只会提示，不执行危险动作 |
+
+### 推荐操作顺序
+
+```text
+1. 上电 / 启动服务后，默认处于 DISABLE
+2. 按 LB + A，让机器人进入 STAND
+3. 按 LB + Y，选择 locomotion family
+4. 按 LT + Y，启动 dream_waq/dream_waq
+5. 运行中如需停止并回站立，再按一次 LB + A
+6. 如需紧急失能，按 RB + X
+```
 
 ## 架构
 
@@ -36,6 +62,9 @@ ares_rl_node     ──/motor_command──>  ares_driver_node
 
 ares_driver_node  ──/xbox_vel────────>  ares_rl_node
 (geometry_msgs/Twist)                 (手柄速度指令)
+
+ares_driver_node  ──/remote_command──>  ares_rl_node
+(std_msgs/UInt8)                      (LOGIC 手柄组合键事件)
 ```
 
 - **ares_driver_node** — 封装 `libdog_driver.so`。打开 4 路 CAN + WIT IMU。运行状态机（DISABLE/STAND/RL）。
@@ -52,6 +81,7 @@ ares_driver_node  ──/xbox_vel────────>  ares_rl_node
 | `/motor_command` | rl → driver | `sensor_msgs/JointState` | position[12]（目标位置） |
 | `/motor_param_update` | rl → driver | `sensor_msgs/JointState` | position=kp, velocity=kd, effort=torque |
 | `/xbox_vel` | driver → rl | `geometry_msgs/Twist` | 手柄速度指令 |
+| `/remote_command` | driver → rl | `std_msgs/UInt8` | LOGIC 手柄组合键事件 |
 
 *`linear_acceleration` 字段传递的是 projected gravity（非真实加速度）。
 
@@ -75,7 +105,7 @@ RL 节点内部使用 `driver_to_topic[]`（逆映射）在模型顺序和 drive
 
 ## 配置
 
-每个策略一个 YAML 文件，例如 `policy/ares_himloco/himloco/config.yaml`。
+每个策略一个 YAML 文件，例如 `policy/dream_waq/dream_waq/config.yaml`。
 
 两个节点共用此文件。关键参数：
 
@@ -116,7 +146,7 @@ cmake -S src/rl_sar -B src/rl_sar/build && cmake --build src/rl_sar/build
 
 ## 状态机
 
-`ares_driver_node` 管理三模式状态机。
+`ares_driver_node` 管理四模式状态机。
 
 ### 模式
 
@@ -125,22 +155,34 @@ cmake -S src/rl_sar -B src/rl_sar/build && cmake --build src/rl_sar/build
 | `DISABLE` | 全部电机关闭。安全默认值。 |
 | `STAND` | 电机使能，插值到零位姿态（2 秒），然后保持。 |
 | `RL` | 正常运行 — 接收 RL 节点的 `/motor_command`。 |
+| `DAMPING` | 预留阻尼模式入口；当前版本先接入按键和底层切换，后续可继续细化。 |
 
 ### 状态转换
 
 ```
 DISABLE ──> STAND ──> RL
-             ^          │
-             │          ├──> STAND
-             │          └──> DISABLE
+   │          │        │
+   │          └──────> DAMPING
+   └──────────────────> DAMPING
 ```
 
 仅允许以上转换，其他转换会被拒绝。
 
 ### 初始模式
 
-- 全部关节接近位置 0 → **RL 模式**
-- 否则 → **STAND 模式**
+- 启动后始终进入 **DISABLE 模式**
+- 需要通过手柄 `LB + A` 明确触发站立
+
+### LOGIC 手柄按键
+
+完整遥控指令请直接参考前面的 [遥控指令](#遥控指令) 小节。
+
+这里和状态机相关的要点再强调一次：
+
+- `LB + A`：从 `DISABLE` 进入 `STAND`，或从运行中的策略回到 `STAND`
+- `LT + Y`：仅在已经站立后用于启动 `dream_waq/dream_waq`
+- `RB + X`：任意时刻优先执行 `DISABLE`
+- `LB + RB`：进入 `DAMPING`
 
 ### 当前键盘调用的 API
 
@@ -153,7 +195,7 @@ DISABLE ──> STAND ──> RL
 | `d`（任意 → DISABLE） | `driver_->DisableAll()` |
 | 查询模式 | `core.GetMode()` 返回 `DriverMode` 枚举 |
 
-状态机逻辑在 `AresDriverCore::Impl::handle_key_command()` 和 `transition_allowed()` 中。要用 gamepad 替换键盘，需将这些暴露为公共 API — 见 [扩展 Gamepad](#扩展-gamepad)。
+键盘控制现在只作为 fallback 调试入口，日常运行以 LOGIC 手柄为主。状态机逻辑已经通过公共接口暴露给遥控链路使用。
 
 ### DogDriver API 使用
 
@@ -182,7 +224,7 @@ DISABLE ──> STAND ──> RL
 ```cpp
 #include "ares_driver_core.hpp"
 
-AresDriverCore core(POLICY_DIR, "ares_himloco/himloco");
+AresDriverCore core(POLICY_DIR, "dream_waq/dream_waq");
 ```
 
 读取 `config.yaml`，初始化 DogDriver（CAN + IMU），设置 kp/kd/torque，启动内部命令循环线程。
@@ -243,7 +285,7 @@ core.gamepad_connected();
 #include "rl_core.hpp"
 
 AresRL rl;
-bool ok = rl.Init(POLICY_DIR, "ares_himloco/himloco");
+bool ok = rl.Init(POLICY_DIR, "dream_waq/dream_waq");
 ```
 
 ### 状态控制
@@ -280,26 +322,23 @@ const auto& d2t = rl.GetDriverToTopic();  // driver 索引 → topic 索引
 int topic_idx = d2t[driver_idx];
 ```
 
-### 策略切换
+### 策略启动
 
-策略注册在 `policy/policies.yaml` 中：
+当前版本固定接入 `dream_waq/dream_waq` 作为唯一 locomotion policy，不再通过键盘数字键在多个 policy 之间切换。
 
-```yaml
-"1": ares_himloco/himloco
-"2": dogv2_cts/cts
-"3": dream_waq/dream_waq
-```
-
-运行时切换：
+典型启动流程：
 
 ```cpp
 rl.SetState(AresRL::State::STOPPED);
-rl.Init(POLICY_DIR, "dogv2_cts/cts");
-// 发布新电机参数到 /motor_param_update ...
+rl.Init(POLICY_DIR, "dream_waq/dream_waq");
+// 发布电机参数到 /motor_param_update ...
 rl.SetState(AresRL::State::RUNNING);
 ```
 
-**注意**：每个策略可能有不同的 kp/kd/torque/action_scale/default_dof_pos。`Init()` 后需通过 `/motor_param_update` 发布新参数。
+对应的实际运行入口由 LOGIC 手柄触发：
+
+- `LB + Y`：选择 locomotion family
+- `LT + Y`：启动 `dream_waq/dream_waq`
 
 ### 录制
 
@@ -318,32 +357,53 @@ double ms = rl.GetInferenceTimeMs();
 int count = rl.GetInferenceCount();
 ```
 
-## 扩展 Gamepad
+## systemd 自启
 
-### 替换键盘控制状态机（Driver 侧）
+参考 `Loco_Intern_SDK/install_service.sh`，本仓库现在也提供了安装脚本：
 
-当前键盘内部调用 `handle_key_command()`。用 gamepad 驱动：
+```bash
+sudo ./install_service.sh dream_waq/dream_waq
+```
 
-1. 给 `AresDriverCore` 添加公共方法：
-   ```cpp
-   void RequestModeChange(DriverMode target);
-   ```
-2. 将 `transition_allowed()` + 模式设置逻辑从 `Impl` 移入此方法。
-3. gamepad 按键时调用 `core.RequestModeChange(DriverMode::STAND)`。
+安装后可用：
 
-### 替换键盘切换策略（RL 侧）
+```bash
+sudo systemctl start ares_rl.service
+systemctl status ares_rl.service
+journalctl -u ares_rl.service -f
+```
 
-当前键盘调用 `Init()` + `SetState()`。用 gamepad 驱动：
+移除：
 
-1. 加载 `policies.yaml` 获取 key→policy 映射。
-2. 按键时：
-   ```cpp
-   rl.SetState(AresRL::State::STOPPED);
-   rl.Init(POLICY_DIR, selected_policy);
-   // 发布新电机参数...
-   rl.SetState(AresRL::State::RUNNING);
-   ```
-3. 与 driver 协调 — 切换前确保处于 STAND 模式，然后切回 RL。
+```bash
+sudo ./install_service.sh --remove
+```
+
+## 遥控实现说明
+
+### Driver 侧
+
+`ares_driver_node` 负责读取 LOGIC 手柄，并将组合键事件通过 `/remote_command` 发给 RL 节点，同时直接处理底层模式切换：
+
+- `LB + A` → `STAND`
+- `RB + X` → `DISABLE`
+- `LB + RB` → `DAMPING`
+
+### RL 侧
+
+`ares` 节点订阅 `/remote_command`，负责策略启停和录制：
+
+- `LB + Y` → 选择 locomotion family
+- `LT + Y` → 启动 `dream_waq/dream_waq`
+- `LB + A` → 停策略并回站立
+- `LB + START` → 切换录制开关
+
+### 键盘 fallback
+
+键盘输入仍然保留用于调试：
+
+- driver 侧：`s / r / d`
+- RL 侧：`0` 停止策略，`L` 切换录制
 
 ### 循环结构
 
@@ -374,15 +434,15 @@ rl_sar-ARES/
 │   │   ├── ares_driver_node.cpp      # Driver 的 ROS2 封装
 │   │   ├── rl_core.cpp               # ONNX 推理逻辑
 │   │   ├── rl_node.cpp               # RL 的 ROS2 封装
-│   │   └── keyboard_helper.cpp       # 非阻塞键盘输入
+│   │   └── keyboard_helper.cpp       # 非阻塞键盘输入（fallback）
 │   └── library/core/                 # inference_runtime、observation_buffer、loop
 ├── driver/
 │   ├── include/dog_driver.hpp        # CAN + IMU 驱动 API
 │   ├── src/
 │   └── libdog_driver.so
 ├── policy/
-│   ├── policies.yaml                 # 策略注册表
-│   └── ares_himloco/himloco/
+│   ├── policies.yaml                 # 策略注册表（当前遥控流程固定使用 dream_waq）
+│   └── dream_waq/dream_waq/
 │       ├── config.yaml
 │       └── policy.onnx
 └── library/inference_runtime/        # ONNX Runtime（通过 download_inference_runtime.sh）
