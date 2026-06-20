@@ -20,6 +20,9 @@ public:
     ~AresRL();
 
     bool Init(const std::string& policy_dir, const std::string& policy_name);
+    void PrepareForStart(const float imu_gyro[3], const float imu_gravity[3],
+                         const float commands[3], const float joint_pos[12],
+                         const float joint_vel[12], const float joint_torque[12]);
 
     void RunModel(const float imu_gyro[3], const float imu_gravity[3],
                   const float commands[3], const float joint_pos[12],

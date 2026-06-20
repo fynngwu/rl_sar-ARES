@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <map>
+#include <vector>
 
 using Lock = std::lock_guard<std::mutex>;
 
@@ -98,7 +99,42 @@ private:
         }
 
         PublishMotorParams();
-        all_sensors_ready_ = false;
+        return true;
+    }
+
+    bool BeginPolicyStart()
+    {
+        if (!all_sensors_ready_) {
+            RCLCPP_WARN(get_logger(), "Remote: sensors not ready, refusing policy start");
+            return false;
+        }
+
+        std::array<float, 12> joint_pos, joint_vel, joint_torque;
+        std::array<float, 3> imu_gyro, imu_gravity, commands;
+        {
+            Lock lock(data_mutex_);
+            joint_pos = joint_pos_;
+            joint_vel = joint_vel_;
+            joint_torque = joint_torque_;
+            imu_gyro = imu_gyro_;
+            imu_gravity = imu_gravity_;
+            commands = commands_buffer_;
+        }
+
+        rl_.PrepareForStart(
+            imu_gyro.data(), imu_gravity.data(), commands.data(),
+            joint_pos.data(), joint_vel.data(), joint_torque.data());
+        PublishMotorParams();
+
+        startup_hold_target_.assign(joint_pos.begin(), joint_pos.end());
+        startup_hold_cycles_remaining_ = startup_hold_cycles_;
+        startup_active_ = true;
+        rl_.SetState(AresRL::State::STOPPED);
+
+        RCLCPP_INFO(
+            get_logger(),
+            "Remote: policy start prepared. Holding current pose for %d cycles",
+            startup_hold_cycles_remaining_);
         return true;
     }
 
@@ -176,6 +212,19 @@ private:
             rl_.ToggleRecording();
 
         if (!all_sensors_ready_) return;
+
+        if (startup_active_) {
+            PublishJointCommand(startup_hold_target_);
+            if (startup_hold_cycles_remaining_ > 0) {
+                --startup_hold_cycles_remaining_;
+            } else {
+                startup_active_ = false;
+                rl_.SetState(AresRL::State::RUNNING);
+                RCLCPP_INFO(get_logger(), "Remote: RUNNING (%s)", selected_policy_.c_str());
+            }
+            return;
+        }
+
         if (rl_.GetState() == AresRL::State::STOPPED) return;
 
         {
@@ -196,6 +245,8 @@ private:
 
         switch (cmd) {
         case RemoteCommand::RECOVER_STAND:
+            startup_active_ = false;
+            startup_hold_cycles_remaining_ = 0;
             if (rl_.GetState() != AresRL::State::STOPPED) {
                 PublishJointCommand(rl_.GetDefaultDofPos());
                 rl_.SetState(AresRL::State::STOPPED);
@@ -216,15 +267,14 @@ private:
                 RCLCPP_ERROR(get_logger(), "Remote: failed to initialize %s", selected_policy_.c_str());
                 break;
             }
-            if (rl_.GetState() == AresRL::State::RUNNING)
+            if (rl_.GetState() == AresRL::State::RUNNING || startup_active_)
                 break;
-            PublishMotorParams();
-            all_sensors_ready_ = true;
-            rl_.SetState(AresRL::State::RUNNING);
-            RCLCPP_INFO(get_logger(), "Remote: RUNNING (%s)", selected_policy_.c_str());
+            BeginPolicyStart();
             break;
         case RemoteCommand::DISABLE:
         case RemoteCommand::DAMPING:
+            startup_active_ = false;
+            startup_hold_cycles_remaining_ = 0;
             if (rl_.GetState() != AresRL::State::STOPPED) {
                 PublishJointCommand(rl_.GetDefaultDofPos());
                 rl_.SetState(AresRL::State::STOPPED);
@@ -319,6 +369,10 @@ private:
     std::string selected_policy_;
     bool locomotion_selected_{false};
     std::optional<rclcpp::Time> last_publish_log_time_;
+    bool startup_active_{false};
+    int startup_hold_cycles_remaining_{0};
+    const int startup_hold_cycles_{40};
+    std::vector<float> startup_hold_target_;
 };
 
 int main(int argc, char** argv)

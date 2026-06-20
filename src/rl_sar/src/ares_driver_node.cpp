@@ -108,6 +108,17 @@ private:
             target[i] = msg->position[i];
         core_->SetTopicCommand(target);
 
+        if (pending_rl_enable_ && core_->GetMode() == DriverMode::STAND) {
+            bool ok = core_->RequestModeChange(DriverMode::RL);
+            RCLCPP_INFO(
+                this->get_logger(),
+                "First prepared /motor_command received. RequestModeChange(RL) result=%s, driver mode after=%s",
+                ok ? "ok" : "rejected",
+                DriverModeName(core_->GetMode()));
+            if (ok)
+                pending_rl_enable_ = false;
+        }
+
         auto now = this->now();
         if (!last_motor_cmd_log_time_ ||
             (now - *last_motor_cmd_log_time_).seconds() >= 1.0) {
@@ -202,6 +213,7 @@ private:
         switch (cmd) {
         case RemoteCommand::RECOVER_STAND:
         {
+            pending_rl_enable_ = false;
             bool ok = core_->RequestModeChange(DriverMode::STAND);
             RCLCPP_INFO(
                 this->get_logger(),
@@ -212,6 +224,7 @@ private:
         }
         case RemoteCommand::DISABLE:
         {
+            pending_rl_enable_ = false;
             bool ok = core_->RequestModeChange(DriverMode::DISABLE);
             RCLCPP_INFO(
                 this->get_logger(),
@@ -222,6 +235,7 @@ private:
         }
         case RemoteCommand::DAMPING:
         {
+            pending_rl_enable_ = false;
             bool ok = core_->RequestModeChange(DriverMode::DAMPING);
             RCLCPP_INFO(
                 this->get_logger(),
@@ -236,12 +250,17 @@ private:
             break;
         case RemoteCommand::START_DREAMWAQ:
         {
-            bool ok = core_->RequestModeChange(DriverMode::RL);
-            RCLCPP_INFO(
-                this->get_logger(),
-                "RequestModeChange(RL) result=%s, driver mode after=%s",
-                ok ? "ok" : "rejected",
-                DriverModeName(core_->GetMode()));
+            if (core_->GetMode() != DriverMode::STAND) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "Ignoring RL start because driver mode is %s, expected STAND",
+                    DriverModeName(core_->GetMode()));
+            } else {
+                pending_rl_enable_ = true;
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "RL start requested. Waiting for first prepared /motor_command before switching driver to RL.");
+            }
             break;
         }
         case RemoteCommand::TOGGLE_RECORD:
@@ -329,6 +348,7 @@ private:
     std::optional<rclcpp::Time> last_motor_cmd_log_time_;
     DriverMode last_logged_mode_{DriverMode::DISABLE};
     std::string last_gamepad_signature_;
+    bool pending_rl_enable_{false};
 };
 
 int main(int argc, char **argv)
