@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 ACTION="${1:-make}"
+ICEORYX_VERSION="v2.95.4"
 ICEORYX_DIR="$SCRIPT_DIR/.deps/iceoryx"
 ICEORYX_INSTALL_DIR="$SCRIPT_DIR/.deps/iceoryx_install"
 
@@ -17,11 +18,17 @@ ensure_iceoryx() {
 
     if [ -f "$ICEORYX_INSTALL_DIR/lib/cmake/iceoryx_posh/iceoryx_poshConfig.cmake" ] || \
        [ -f "$ICEORYX_INSTALL_DIR/lib64/cmake/iceoryx_posh/iceoryx_poshConfig.cmake" ]; then
-        echo "[iceoryx] Found local iceoryx at $ICEORYX_INSTALL_DIR"
-        return 0
+        local installed_ver=""
+        if [ -f "$ICEORYX_DIR/VERSION_NUMBER" ]; then
+            installed_ver=$(cat "$ICEORYX_DIR/VERSION_NUMBER" 2>/dev/null | tr -d '[:space:]')
+        fi
+        if [ "$installed_ver" = "2.95.4" ]; then
+            echo "[iceoryx] Found local iceoryx v2.95.4 at $ICEORYX_INSTALL_DIR"
+            return 0
+        fi
+        echo "[iceoryx] Local iceoryx version mismatch ($installed_ver != 2.95.4), reinstalling..."
     fi
 
-    echo "[iceoryx] iceoryx not found — building from source..."
     install_iceoryx
 }
 
@@ -35,13 +42,20 @@ install_iceoryx() {
 
     if [ ! -d "iceoryx" ]; then
         echo "[iceoryx] Cloning iceoryx..."
-        git clone --depth 1 --recurse-submodules https://github.com/eclipse-iceoryx/iceoryx.git
+        git clone https://github.com/eclipse-iceoryx/iceoryx.git
     fi
 
     cd iceoryx
-    git pull --ff-only 2>/dev/null || true
+    echo "[iceoryx] Checking out $ICEORYX_VERSION..."
+    git fetch --tags 2>/dev/null || true
+    git checkout "$ICEORYX_VERSION" 2>/dev/null || {
+        echo "[iceoryx] Failed to checkout $ICEORYX_VERSION, trying with fetch --depth 1..."
+        git fetch --depth 1 origin tag "$ICEORYX_VERSION" 2>&1 | tail -3
+        git checkout "$ICEORYX_VERSION"
+    }
 
-    echo "[iceoryx] Configuring..."
+    echo "[iceoryx] Configuring $ICEORYX_VERSION..."
+    rm -rf build
     cmake -Bbuild -Hiceoryx_meta \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_TEST=OFF \
@@ -51,14 +65,15 @@ install_iceoryx() {
         -DCMAKE_INSTALL_PREFIX="$ICEORYX_INSTALL_DIR" \
         2>&1 | tail -5
 
-    echo "[iceoryx] Building (this may take a few minutes)..."
+    echo "[iceoryx] Building $ICEORYX_VERSION (this may take a few minutes)..."
     cmake --build build -j$(nproc) 2>&1 | tail -5
 
+    rm -rf "$ICEORYX_INSTALL_DIR"
     echo "[iceoryx] Installing to $ICEORYX_INSTALL_DIR..."
     cmake --build build --target install 2>&1 | tail -3
 
     cd "$SCRIPT_DIR"
-    echo "[iceoryx] iceoryx installed successfully"
+    echo "[iceoryx] iceoryx $ICEORYX_VERSION installed successfully"
 }
 
 install_bins() {
@@ -69,12 +84,10 @@ install_bins() {
 
 ensure_iceoryx
 
-if [ -d "$ICEORYX_INSTALL_DIR" ]; then
-    if [ -d "$ICEORYX_INSTALL_DIR/lib64" ]; then
-        export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:+$CMAKE_PREFIX_PATH:}$ICEORYX_INSTALL_DIR/lib64"
-    fi
-    export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:+$CMAKE_PREFIX_PATH:}$ICEORYX_INSTALL_DIR"
+if [ -d "$ICEORYX_INSTALL_DIR/lib64" ]; then
+    export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:+$CMAKE_PREFIX_PATH:}$ICEORYX_INSTALL_DIR/lib64"
 fi
+export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:+$CMAKE_PREFIX_PATH:}$ICEORYX_INSTALL_DIR"
 
 if [ "$ACTION" = "full" ]; then
     echo "=== ARES Full Build ==="
@@ -87,6 +100,7 @@ if [ "$ACTION" = "full" ]; then
 
     echo ""
     echo "[2/2] Building iceoryx nodes..."
+    rm -rf src/rl_sar/build
     cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
     cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc) 2>&1 | tail -3
 

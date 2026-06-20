@@ -36,4 +36,8 @@ struct XboxVel {
     float angular_z;
 };
 
+struct RemoteCmd {
+    uint8_t cmd;
+};
+
 } // namespace iox_msg

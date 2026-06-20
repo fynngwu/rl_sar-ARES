@@ -1,5 +1,6 @@
 /*
  * ARES RL Node — iceoryx-based RL inference node.
+ * Replaces ROS2 transport with iceoryx zero-copy IPC.
  */
 
 #include "iceoryx_posh/popo/publisher.hpp"
@@ -10,6 +11,7 @@
 #include "loop.hpp"
 #include "keyboard_helper.hpp"
 #include "iceoryx_transport.hpp"
+#include "remote_command.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -43,20 +45,22 @@ int main(int argc, char** argv)
     AresRL rl;
 
     iox::popo::PublisherOptions pubOpts;
-    pubOpts.m_historyCapacity = 10;
+    pubOpts.historyCapacity = 10;
     iox::popo::Publisher<iox_msg::MotorCommand> motorCmdPub(
         iox::capro::ServiceDescription{"rl_sar", "motor_command", ""}, pubOpts);
     iox::popo::Publisher<iox_msg::MotorParam> motorParamPub(
         iox::capro::ServiceDescription{"rl_sar", "motor_param", ""}, pubOpts);
 
     iox::popo::SubscriberOptions subOpts;
-    subOpts.m_historyCapacity = 10;
+    subOpts.queueCapacity = 10;
     iox::popo::Subscriber<iox_msg::MotorFeedback> motorFbSub(
         iox::capro::ServiceDescription{"rl_sar", "motor_feedback", ""}, subOpts);
     iox::popo::Subscriber<iox_msg::Imu> imuSub(
         iox::capro::ServiceDescription{"rl_sar", "imu", ""}, subOpts);
     iox::popo::Subscriber<iox_msg::XboxVel> xboxSub(
         iox::capro::ServiceDescription{"rl_sar", "xbox_vel", ""}, subOpts);
+    iox::popo::Subscriber<iox_msg::RemoteCmd> remoteCmdSub(
+        iox::capro::ServiceDescription{"rl_sar", "remote_cmd", ""}, subOpts);
 
     std::map<char, std::string> policy_map;
     {
@@ -71,6 +75,63 @@ int main(int argc, char** argv)
     std::array<float, 3> commands_buffer_{}, imu_gyro_{}, imu_gravity_{};
     bool imu_received_{false}, motor_feedback_received_{false};
     bool all_sensors_ready_{false};
+    bool locomotion_selected_{false};
+    std::string selected_policy_ = "dream_waq/dream_waq";
+    if (!policy_name.empty())
+        selected_policy_ = policy_name;
+
+    auto publishJointCommand = [&](const std::vector<float>& positions) {
+        iox_msg::MotorCommand cmd;
+        const auto& limits = rl.GetPositionLimits();
+        for (int i = 0; i < rl.GetNumDofs(); ++i) {
+            float pos = positions[rl.GetDriverToTopic()[i]];
+            if (!limits.empty() && static_cast<size_t>(i) < limits.size())
+                pos = std::clamp(pos, limits[i].first, limits[i].second);
+            cmd.position[i] = pos;
+        }
+        auto loan = motorCmdPub.loan();
+        if (loan.has_value()) {
+            auto& l = loan.value();
+            std::memcpy(l.get(), &cmd, sizeof(iox_msg::MotorCommand));
+            l.publish();
+        }
+    };
+
+    auto publishMotorParams = [&]() {
+        iox_msg::MotorParam msg;
+        const auto& kp = rl.GetKp();
+        const auto& kd = rl.GetKd();
+        const auto& tl = rl.GetTorqueLimits();
+        for (int i = 0; i < rl.GetNumDofs(); ++i) {
+            msg.kp[i]     = i < (int)kp.size() ? kp[i] : 20.0f;
+            msg.kd[i]     = i < (int)kd.size() ? kd[i] : 1.0f;
+            msg.torque[i] = i < (int)tl.size() ? tl[i] : 17.0f;
+        }
+        auto loan = motorParamPub.loan();
+        if (loan.has_value()) {
+            auto& l = loan.value();
+            std::memcpy(l.get(), &msg, sizeof(iox_msg::MotorParam));
+            l.publish();
+        }
+        printf("[RL] Motor params published: kp=[");
+        for (int i = 0; i < rl.GetNumDofs(); ++i)
+            printf("%s%.1f", i ? "," : "", msg.kp[i]);
+        printf("] kd=[");
+        for (int i = 0; i < rl.GetNumDofs(); ++i)
+            printf("%s%.2f", i ? "," : "", msg.kd[i]);
+        printf("] torque=[");
+        for (int i = 0; i < rl.GetNumDofs(); ++i)
+            printf("%s%.2f", i ? "," : "", msg.torque[i]);
+        printf("]\n");
+    };
+
+    auto initRL = [&](const std::string& name) -> bool {
+        if (!rl.Init(std::string(POLICY_DIR), name))
+            return false;
+        publishMotorParams();
+        all_sensors_ready_ = false;
+        return true;
+    };
 
     auto pollSubscribers = [&]() {
         auto fbResult = motorFbSub.take();
@@ -119,49 +180,64 @@ int main(int argc, char** argv)
                 commands_buffer_[2] = std::clamp(xbox->angular_z, limits[2].first, limits[2].second);
             }
         }
-    };
 
-    auto publishJointCommand = [&](const std::vector<float>& positions) {
-        iox_msg::MotorCommand cmd;
-        const auto& limits = rl.GetPositionLimits();
-        for (int i = 0; i < rl.GetNumDofs(); ++i) {
-            float pos = positions[rl.GetDriverToTopic()[i]];
-            if (!limits.empty() && static_cast<size_t>(i) < limits.size())
-                pos = std::clamp(pos, limits[i].first, limits[i].second);
-            cmd.position[i] = pos;
+        auto remoteResult = remoteCmdSub.take();
+        if (remoteResult.has_value()) {
+            auto& sample = remoteResult.value();
+            const auto* rc = sample.get();
+            if (rc) {
+                RemoteCommand cmd = static_cast<RemoteCommand>(rc->cmd);
+                switch (cmd) {
+                case RemoteCommand::RECOVER_STAND:
+                    if (rl.GetState() != AresRL::State::STOPPED) {
+                        publishJointCommand(rl.GetDefaultDofPos());
+                        rl.SetState(AresRL::State::STOPPED);
+                        printf("[RL] Remote: stop policy and recover stand\n");
+                    }
+                    locomotion_selected_ = false;
+                    break;
+                case RemoteCommand::SELECT_LOCOMOTION:
+                    locomotion_selected_ = true;
+                    printf("[RL] Remote: locomotion family armed\n");
+                    break;
+                case RemoteCommand::START_DREAMWAQ:
+                    if (!locomotion_selected_) {
+                        printf("[RL] WARN: locomotion family not selected, ignoring dreamwaq start\n");
+                        break;
+                    }
+                    if (!rl.IsInitialized() || rl.GetState() == AresRL::State::STOPPED) {
+                        printf("[RL] Loading %s ...\n", selected_policy_.c_str());
+                        if (!initRL(selected_policy_)) {
+                            printf("[RL] ERROR: failed to initialize %s\n", selected_policy_.c_str());
+                            break;
+                        }
+                    }
+                    if (rl.GetState() == AresRL::State::RUNNING)
+                        break;
+                    all_sensors_ready_ = true;
+                    rl.SetState(AresRL::State::RUNNING);
+                    printf("[RL] Remote: RUNNING (%s)\n", selected_policy_.c_str());
+                    break;
+                case RemoteCommand::DISABLE:
+                case RemoteCommand::DAMPING:
+                    if (rl.GetState() != AresRL::State::STOPPED) {
+                        publishJointCommand(rl.GetDefaultDofPos());
+                        rl.SetState(AresRL::State::STOPPED);
+                        printf("[RL] Remote: STOPPED\n");
+                    }
+                    break;
+                case RemoteCommand::TOGGLE_RECORD:
+                    if (rl.GetState() == AresRL::State::RUNNING) {
+                        rl.ToggleRecording();
+                    } else {
+                        printf("[RL] WARN: recording toggle ignored because policy is not running\n");
+                    }
+                    break;
+                case RemoteCommand::NONE:
+                    break;
+                }
+            }
         }
-        auto loan = motorCmdPub.loan();
-        if (loan.has_value()) {
-            auto& l = loan.value();
-            std::memcpy(l.get(), &cmd, sizeof(iox_msg::MotorCommand));
-            l.publish();
-        }
-    };
-
-    auto publishMotorParams = [&]() {
-        iox_msg::MotorParam msg;
-        const auto& kp = rl.GetKp();
-        const auto& kd = rl.GetKd();
-        const auto& tl = rl.GetTorqueLimits();
-        for (int i = 0; i < rl.GetNumDofs(); ++i) {
-            msg.kp[i]     = i < (int)kp.size() ? kp[i] : 20.0f;
-            msg.kd[i]     = i < (int)kd.size() ? kd[i] : 1.0f;
-            msg.torque[i] = i < (int)tl.size() ? tl[i] : 17.0f;
-        }
-        auto loan = motorParamPub.loan();
-        if (loan.has_value()) {
-            auto& l = loan.value();
-            std::memcpy(l.get(), &msg, sizeof(iox_msg::MotorParam));
-            l.publish();
-        }
-    };
-
-    auto initRL = [&](const std::string& name) -> bool {
-        if (!rl.Init(std::string(POLICY_DIR), name))
-            return false;
-        publishMotorParams();
-        all_sensors_ready_ = false;
-        return true;
     };
 
     if (!policy_name.empty()) {
@@ -214,24 +290,6 @@ int main(int argc, char** argv)
 
         int key = kbhit();
 
-        if (policy_map.count(static_cast<char>(key)) &&
-            (!rl.IsInitialized() || rl.GetState() == AresRL::State::STOPPED)) {
-            auto it = policy_map.find(static_cast<char>(key));
-            if (it != policy_map.end()) {
-                printf("[RL] Loading %s ...\n", it->second.c_str());
-                if (initRL(it->second)) {
-                    all_sensors_ready_ = true;
-                    rl.SetState(AresRL::State::RUNNING);
-                    printf("[RL] RUNNING (%s)\n", it->second.c_str());
-                } else {
-                    printf("[RL] Init FAILED\n");
-                }
-            }
-            return;
-        }
-
-        if (!rl.IsInitialized()) return;
-
         if (key == '0' && rl.GetState() != AresRL::State::STOPPED) {
             publishJointCommand(rl.GetDefaultDofPos());
             rl.SetState(AresRL::State::STOPPED);
@@ -252,9 +310,9 @@ int main(int argc, char** argv)
     };
 
     std::string help = "\n=== ARES RL Controls (iceoryx) ===\n";
-    for (const auto& [key, name] : policy_map)
-        help += "  [" + std::string(1, key) + "] " + name + "\n";
-    help += "  [0] STOP\n  Switch policy from STOPPED\n\n";
+    help += "  LOGIC remote enabled\n";
+    help += "  dream_waq/dream_waq is fixed as the locomotion policy\n";
+    help += "  [0] STOP (keyboard fallback)\n\n";
     printf("%s", help.c_str());
 
     auto loop_control_ = std::make_shared<LoopFunc>("loop_control", rl.GetDt(), controlLoopFn);

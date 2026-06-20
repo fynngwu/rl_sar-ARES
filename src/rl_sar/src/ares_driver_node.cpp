@@ -1,5 +1,6 @@
 /*
  * ARES Driver Node — thin iceoryx wrapper around AresDriverCore.
+ * Replaces ROS2 transport with iceoryx zero-copy IPC.
  */
 
 #include "iceoryx_posh/popo/publisher.hpp"
@@ -9,6 +10,7 @@
 #include "ares_driver_core.hpp"
 #include "joint_names.hpp"
 #include "iceoryx_transport.hpp"
+#include "remote_command.hpp"
 #include "loop.hpp"
 
 #include <array>
@@ -35,12 +37,40 @@ static std::string FmtFloatVec(const std::vector<float>& v)
     return oss.str();
 }
 
+static RemoteCommand DetectRemoteCommand(AresDriverCore* core)
+{
+    if (!core->gamepad_connected())
+        return RemoteCommand::NONE;
+
+    const bool a = core->GetGamepadButton(0);
+    const bool x = core->GetGamepadButton(3);
+    const bool y = core->GetGamepadButton(2);
+    const bool lb = core->GetGamepadButton(4);
+    const bool rb = core->GetGamepadButton(5);
+    const bool start = core->GetGamepadButton(7);
+    const bool lt = core->GetGamepadAxis(2) > 0.5f;
+
+    if (rb && x)
+        return RemoteCommand::DISABLE;
+    if (lb && rb)
+        return RemoteCommand::DAMPING;
+    if (lb && start)
+        return RemoteCommand::TOGGLE_RECORD;
+    if (lb && a)
+        return RemoteCommand::RECOVER_STAND;
+    if (lb && y)
+        return RemoteCommand::SELECT_LOCOMOTION;
+    if (lt && y)
+        return RemoteCommand::START_DREAMWAQ;
+    return RemoteCommand::NONE;
+}
+
 int main(int argc, char** argv)
 {
     signal(SIGINT, sigHandler);
     signal(SIGTERM, sigHandler);
 
-    std::string policy_name = (argc > 1) ? argv[1] : "ares_himloco/himloco";
+    std::string policy_name = (argc > 1) ? argv[1] : "dream_waq/dream_waq";
     printf("[ARES Driver] Starting (policy: %s)...\n", policy_name.c_str());
 
     iox::runtime::PoshRuntime::initRuntime("ares_driver");
@@ -59,22 +89,70 @@ int main(int argc, char** argv)
         printf("[ARES Driver] WARN: No gamepad at /dev/input/js0\n");
 
     iox::popo::PublisherOptions pubOpts;
-    pubOpts.m_historyCapacity = 10;
+    pubOpts.historyCapacity = 10;
     iox::popo::Publisher<iox_msg::MotorFeedback> motorFbPub(
         iox::capro::ServiceDescription{"rl_sar", "motor_feedback", ""}, pubOpts);
     iox::popo::Publisher<iox_msg::Imu> imuPub(
         iox::capro::ServiceDescription{"rl_sar", "imu", ""}, pubOpts);
     iox::popo::Publisher<iox_msg::XboxVel> xboxPub(
         iox::capro::ServiceDescription{"rl_sar", "xbox_vel", ""}, pubOpts);
+    iox::popo::Publisher<iox_msg::RemoteCmd> remoteCmdPub(
+        iox::capro::ServiceDescription{"rl_sar", "remote_cmd", ""}, pubOpts);
 
     iox::popo::SubscriberOptions subOpts;
-    subOpts.m_historyCapacity = 10;
+    subOpts.queueCapacity = 10;
     iox::popo::Subscriber<iox_msg::MotorCommand> motorCmdSub(
         iox::capro::ServiceDescription{"rl_sar", "motor_command", ""}, subOpts);
     iox::popo::Subscriber<iox_msg::MotorParam> motorParamSub(
         iox::capro::ServiceDescription{"rl_sar", "motor_param", ""}, subOpts);
 
     printf("[ARES Driver] iceoryx transport ready\n");
+
+    RemoteCommand last_remote_cmd_{RemoteCommand::NONE};
+
+    auto publishRemoteCommand = [&]() {
+        RemoteCommand cmd = DetectRemoteCommand(core.get());
+        if (cmd == RemoteCommand::NONE) {
+            last_remote_cmd_ = RemoteCommand::NONE;
+            return;
+        }
+
+        if (cmd == last_remote_cmd_)
+            return;
+
+        last_remote_cmd_ = cmd;
+
+        iox_msg::RemoteCmd msg;
+        msg.cmd = static_cast<uint8_t>(cmd);
+        auto loan = remoteCmdPub.loan();
+        if (loan.has_value()) {
+            auto& l = loan.value();
+            std::memcpy(l.get(), &msg, sizeof(iox_msg::RemoteCmd));
+            l.publish();
+        }
+
+        switch (cmd) {
+        case RemoteCommand::RECOVER_STAND:
+            core->RequestModeChange(DriverMode::STAND);
+            break;
+        case RemoteCommand::DISABLE:
+            core->RequestModeChange(DriverMode::DISABLE);
+            break;
+        case RemoteCommand::DAMPING:
+            core->RequestModeChange(DriverMode::DAMPING);
+            printf("[ARES Driver] DAMPING mode requested\n");
+            break;
+        case RemoteCommand::SELECT_LOCOMOTION:
+            printf("[ARES Driver] Locomotion family selected\n");
+            break;
+        case RemoteCommand::START_DREAMWAQ:
+            break;
+        case RemoteCommand::TOGGLE_RECORD:
+            break;
+        case RemoteCommand::NONE:
+            break;
+        }
+    };
 
     auto feedbackLoop = std::make_shared<LoopFunc>("feedback", 0.01f, [&]() {
         auto cmdResult = motorCmdSub.take();
@@ -98,9 +176,20 @@ int main(int argc, char** argv)
                 std::vector<float> kd(param->kd, param->kd + AresDriverCore::NUM_JOINTS);
                 std::vector<float> torque(param->torque, param->torque + AresDriverCore::NUM_JOINTS);
                 core->SetMotorParams(kp, kd, torque);
-                printf("[DRIVER] Motor params updated from iceoryx\n");
+                printf("[DRIVER] Motor params updated: kp=[");
+                for (size_t i = 0; i < kp.size(); ++i)
+                    printf("%s%.1f", i ? "," : "", kp[i]);
+                printf("] kd=[");
+                for (size_t i = 0; i < kd.size(); ++i)
+                    printf("%s%.2f", i ? "," : "", kd[i]);
+                printf("] torque=[");
+                for (size_t i = 0; i < torque.size(); ++i)
+                    printf("%s%.2f", i ? "," : "", torque[i]);
+                printf("]\n");
             }
         }
+
+        publishRemoteCommand();
 
         auto joint_states = core->GetTopicFeedback();
         auto fbLoan = motorFbPub.loan();

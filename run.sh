@@ -3,7 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
-POLICY="${1:-dogv2_cts/cts}"
+POLICY="${1:-dream_waq/dream_waq}"
 SESSION="ares"
 
 # Kill existing session if any
@@ -11,8 +11,9 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 
 # Start RouDi if not running
 if ! pgrep -x iox-roudi > /dev/null 2>&1; then
+    echo "[run] Starting iox-roudi..."
     iox-roudi &
-    sleep 1
+    sleep 2
 fi
 
 # Create tmux session with two panes
