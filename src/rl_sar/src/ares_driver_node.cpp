@@ -37,18 +37,54 @@ static std::string FmtFloatVec(const std::vector<float>& v)
     return oss.str();
 }
 
+static const char* RemoteCommandName(RemoteCommand cmd)
+{
+    switch (cmd) {
+    case RemoteCommand::NONE: return "NONE";
+    case RemoteCommand::RECOVER_STAND: return "RECOVER_STAND";
+    case RemoteCommand::SELECT_LOCOMOTION: return "SELECT_LOCOMOTION";
+    case RemoteCommand::START_DREAMWAQ: return "START_DREAMWAQ";
+    case RemoteCommand::DISABLE: return "DISABLE";
+    case RemoteCommand::DAMPING: return "DAMPING";
+    case RemoteCommand::TOGGLE_RECORD: return "TOGGLE_RECORD";
+    }
+    return "UNKNOWN";
+}
+
+static const char* DriverModeName(DriverMode mode)
+{
+    switch (mode) {
+    case DriverMode::DISABLE: return "DISABLE";
+    case DriverMode::STAND: return "STAND";
+    case DriverMode::RL: return "RL";
+    case DriverMode::DAMPING: return "DAMPING";
+    }
+    return "UNKNOWN";
+}
+
 static RemoteCommand DetectRemoteCommand(AresDriverCore* core)
 {
     if (!core->gamepad_connected())
         return RemoteCommand::NONE;
 
     const bool a = core->GetGamepadButton(0);
-    const bool x = core->GetGamepadButton(3);
-    const bool y = core->GetGamepadButton(2);
+    // LOGIC USB gamepad on this machine reports physical X/Y opposite to the
+    // initial assumption, so map X->button 2 and Y->button 3.
+    const bool x = core->GetGamepadButton(2);
+    const bool y = core->GetGamepadButton(3);
     const bool lb = core->GetGamepadButton(4);
     const bool rb = core->GetGamepadButton(5);
     const bool start = core->GetGamepadButton(7);
     const bool lt = core->GetGamepadAxis(2) > 0.5f;
+    const bool rt = core->GetGamepadAxis(5) > 0.5f;
+
+    if (a || x || y || lb || rb || start || lt || rt) {
+        printf("[ARES Driver] Gamepad state: A=%d X=%d Y=%d LB=%d RB=%d START=%d LT=%.3f RT=%.3f mode=%s\n",
+               a, x, y, lb, rb, start,
+               core->GetGamepadAxis(2),
+               core->GetGamepadAxis(5),
+               DriverModeName(core->GetMode()));
+    }
 
     if (rb && x)
         return RemoteCommand::DISABLE;
@@ -122,6 +158,10 @@ int main(int argc, char** argv)
 
         last_remote_cmd_ = cmd;
 
+        printf("[ARES Driver] Remote command detected: %s (driver mode before=%s)\n",
+               RemoteCommandName(cmd),
+               DriverModeName(core->GetMode()));
+
         iox_msg::RemoteCmd msg;
         msg.cmd = static_cast<uint8_t>(cmd);
         auto loan = remoteCmdPub.loan();
@@ -130,18 +170,33 @@ int main(int argc, char** argv)
             std::memcpy(l.get(), &msg, sizeof(iox_msg::RemoteCmd));
             l.publish();
         }
+        printf("[ARES Driver] Published /remote_cmd: %s\n", RemoteCommandName(cmd));
 
         switch (cmd) {
         case RemoteCommand::RECOVER_STAND:
-            core->RequestModeChange(DriverMode::STAND);
+        {
+            bool ok = core->RequestModeChange(DriverMode::STAND);
+            printf("[ARES Driver] RequestModeChange(STAND) result=%s, driver mode after=%s\n",
+                   ok ? "ok" : "rejected",
+                   DriverModeName(core->GetMode()));
             break;
+        }
         case RemoteCommand::DISABLE:
-            core->RequestModeChange(DriverMode::DISABLE);
+        {
+            bool ok = core->RequestModeChange(DriverMode::DISABLE);
+            printf("[ARES Driver] RequestModeChange(DISABLE) result=%s, driver mode after=%s\n",
+                   ok ? "ok" : "rejected",
+                   DriverModeName(core->GetMode()));
             break;
+        }
         case RemoteCommand::DAMPING:
-            core->RequestModeChange(DriverMode::DAMPING);
-            printf("[ARES Driver] DAMPING mode requested\n");
+        {
+            bool ok = core->RequestModeChange(DriverMode::DAMPING);
+            printf("[ARES Driver] RequestModeChange(DAMPING) result=%s, driver mode after=%s\n",
+                   ok ? "ok" : "rejected",
+                   DriverModeName(core->GetMode()));
             break;
+        }
         case RemoteCommand::SELECT_LOCOMOTION:
             printf("[ARES Driver] Locomotion family selected\n");
             break;

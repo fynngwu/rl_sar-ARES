@@ -253,9 +253,8 @@ int main(int argc, char** argv)
             printf("[RL] ERROR: RL init failed!\n");
             return 1;
         }
-        all_sensors_ready_ = true;
-        rl.SetState(AresRL::State::RUNNING);
-        printf("[RL] RUNNING (%s)\n", selected.c_str());
+        rl.SetState(AresRL::State::STOPPED);
+        printf("[RL] STOPPED (%s) — use remote to start\n", selected.c_str());
     }
 
     auto modelLoopFn = [&]() {

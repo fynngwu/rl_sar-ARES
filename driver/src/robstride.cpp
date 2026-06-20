@@ -144,6 +144,7 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
                 if (phase_current_fault) {
                     std::cout << "[Robstride] Motor " << motor.motor_id
                               << " phase-current fault, clear and re-enable" << std::endl;
+                    DisableMotor(i);
                     ClearMotor(i);
                     EnableMotor(i);
                 }
@@ -179,6 +180,7 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
                 if (phase_current_fault) {
                     std::cout << "[Robstride] Motor " << motor.motor_id
                               << " phase-current fault, clear and re-enable" << std::endl;
+                    DisableMotor(i);
                     ClearMotor(i);
                     EnableMotor(i);
                 }
