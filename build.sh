@@ -9,6 +9,7 @@ ACTION="${1:-make}"
 ICEORYX_VERSION="v2.95.4"
 ICEORYX_DIR="$SCRIPT_DIR/.deps/iceoryx"
 ICEORYX_INSTALL_DIR="$SCRIPT_DIR/.deps/iceoryx_install"
+BUILD_START=$(date +%s)
 
 ensure_iceoryx() {
     if cmake --find-package -DNAME=iceoryx_posh -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST >/dev/null 2>&1; then
@@ -18,25 +19,14 @@ ensure_iceoryx() {
 
     if [ -f "$ICEORYX_INSTALL_DIR/lib/cmake/iceoryx_posh/iceoryx_poshConfig.cmake" ] || \
        [ -f "$ICEORYX_INSTALL_DIR/lib64/cmake/iceoryx_posh/iceoryx_poshConfig.cmake" ]; then
-        local installed_ver=""
-        if [ -f "$ICEORYX_DIR/VERSION_NUMBER" ]; then
-            installed_ver=$(cat "$ICEORYX_DIR/VERSION_NUMBER" 2>/dev/null | tr -d '[:space:]')
-        fi
-        if [ "$installed_ver" = "2.95.4" ]; then
-            echo "[iceoryx] Found local iceoryx v2.95.4 at $ICEORYX_INSTALL_DIR"
-            return 0
-        fi
-        echo "[iceoryx] Local iceoryx version mismatch ($installed_ver != 2.95.4), reinstalling..."
+        echo "[iceoryx] Found local iceoryx at $ICEORYX_INSTALL_DIR"
+        return 0
     fi
 
     install_iceoryx
 }
 
 install_iceoryx() {
-    echo "[iceoryx] Installing build dependencies via apt..."
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq gcc g++ cmake libacl1-dev libncurses5-dev pkg-config 2>&1 | tail -3
-
     mkdir -p "$SCRIPT_DIR/.deps"
     cd "$SCRIPT_DIR/.deps"
 
@@ -49,7 +39,6 @@ install_iceoryx() {
     echo "[iceoryx] Checking out $ICEORYX_VERSION..."
     git fetch --tags 2>/dev/null || true
     git checkout "$ICEORYX_VERSION" 2>/dev/null || {
-        echo "[iceoryx] Failed to checkout $ICEORYX_VERSION, trying with fetch --depth 1..."
         git fetch --depth 1 origin tag "$ICEORYX_VERSION" 2>&1 | tail -3
         git checkout "$ICEORYX_VERSION"
     }
@@ -82,6 +71,18 @@ install_bins() {
     echo "Installed: ~/.local/bin/ares, ~/.local/bin/ares_driver_node"
 }
 
+print_elapsed() {
+    local end=$(date +%s)
+    local elapsed=$(( end - BUILD_START ))
+    local m=$(( elapsed / 60 ))
+    local s=$(( elapsed % 60 ))
+    if [ $m -gt 0 ]; then
+        echo "[build] Total time: ${m}m${s}s"
+    else
+        echo "[build] Total time: ${s}s"
+    fi
+}
+
 ensure_iceoryx
 
 if [ -d "$ICEORYX_INSTALL_DIR/lib64" ]; then
@@ -94,34 +95,36 @@ if [ "$ACTION" = "full" ]; then
 
     echo ""
     echo "[1/2] Building driver..."
-    cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+    cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release
     cmake --build driver/build --target dog_driver collect_pace_data -j$(nproc) 2>&1 | tail -3
     cp -u driver/build/libdog_driver.so driver/libdog_driver.so 2>/dev/null || true
 
     echo ""
     echo "[2/2] Building iceoryx nodes..."
     rm -rf src/rl_sar/build
-    cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+    cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release
     cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc) 2>&1 | tail -3
 
     install_bins
+    print_elapsed
     echo "=== Done ==="
 
 elif [ "$ACTION" = "make" ]; then
     echo "=== ARES Incremental Build ==="
 
     if [ ! -f driver/build/Makefile ]; then
-        cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+        cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release
     fi
     cmake --build driver/build --target dog_driver collect_pace_data -j$(nproc) 2>&1 | tail -3
     cp -u driver/build/libdog_driver.so driver/libdog_driver.so 2>/dev/null || true
 
     if [ ! -f src/rl_sar/build/Makefile ]; then
-        cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+        cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release
     fi
     cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc) 2>&1 | tail -3
 
     install_bins
+    print_elapsed
     echo "=== Done ==="
 
 else

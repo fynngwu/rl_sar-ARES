@@ -11,7 +11,8 @@
 enum class DriverMode : uint8_t {
     DISABLE,
     STAND,
-    RL
+    RL,
+    DAMPING
 };
 
 class AresDriverCore {
@@ -39,12 +40,15 @@ public:
     JointFeedback GetTopicFeedback() const;
     ImuData GetImuData() const;
     GamepadCommand PollGamepad();
+    bool GetGamepadButton(int button) const;
+    float GetGamepadAxis(int axis) const;
 
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                         const std::vector<float>& torque);
 
     DriverMode GetMode() const;
     void PrintModeHelp() const;
+    bool RequestModeChange(DriverMode target);
 
     const std::vector<float>& config_kp() const;
     const std::vector<float>& config_kd() const;
