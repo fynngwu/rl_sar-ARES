@@ -170,6 +170,44 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
     return true;
 }
 
+void AresRL::PrepareForStart(const float imu_gyro[3], const float imu_gravity[3],
+                             const float commands[3], const float joint_pos[12],
+                             const float joint_vel[12], const float joint_torque[12])
+{
+    if (!rl_init_done_)
+        return;
+
+    obs_.lin_vel = {0, 0, 0};
+    obs_.ang_vel = {imu_gyro[0], imu_gyro[1], imu_gyro[2]};
+    obs_.gravity_vec = {imu_gravity[0], imu_gravity[1], imu_gravity[2]};
+    obs_.commands = {commands[0], commands[1], commands[2]};
+    obs_.base_quat = {1, 0, 0, 0};
+    obs_.actions.assign(num_of_dofs_, 0.0f);
+
+    for (int i = 0; i < num_of_dofs_; ++i) {
+        obs_.dof_pos[i] = joint_pos[i];
+        obs_.dof_vel[i] = joint_vel[i];
+    }
+
+    snap_joint_pos_.assign(joint_pos, joint_pos + num_of_dofs_);
+    snap_joint_vel_.assign(joint_vel, joint_vel + num_of_dofs_);
+    snap_joint_torque_.assign(joint_torque, joint_torque + num_of_dofs_);
+    latest_target_pos_.assign(joint_pos, joint_pos + num_of_dofs_);
+
+    inference_count_ = 0;
+    inference_time_ms_ = 0.0;
+    last_print_time_.reset();
+
+    std::vector<float> obs_vec = ComputeObservation(obs_);
+    if (!obs_history_.empty()) {
+        history_obs_buf_.reset({0}, obs_vec);
+        history_obs_ = history_obs_buf_.get_obs_vec(obs_history_);
+    }
+
+    printf("[RL] Runtime reset for start. hold_target=%s\n",
+           FormatVector(latest_target_pos_).c_str());
+}
+
 void AresRL::RunModel(const float imu_gyro[3], const float imu_gravity[3],
                        const float commands[3], const float joint_pos[12],
                        const float joint_vel[12], const float joint_torque[12])
