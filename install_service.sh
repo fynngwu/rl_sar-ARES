@@ -62,7 +62,8 @@ After=network.target network-online.target
 [Service]
 Type=simple
 ExecStart=${PROJECT_ROOT}/run.sh ${POLICY}
-User=root
+User=ares
+Environment=HOME=/home/ares
 Restart=no
 WorkingDirectory=${PROJECT_ROOT}
 
