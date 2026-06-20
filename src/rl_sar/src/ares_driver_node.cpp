@@ -62,6 +62,31 @@ public:
     }
 
 private:
+    static const char* RemoteCommandName(RemoteCommand cmd)
+    {
+        switch (cmd) {
+        case RemoteCommand::NONE: return "NONE";
+        case RemoteCommand::RECOVER_STAND: return "RECOVER_STAND";
+        case RemoteCommand::SELECT_LOCOMOTION: return "SELECT_LOCOMOTION";
+        case RemoteCommand::START_DREAMWAQ: return "START_DREAMWAQ";
+        case RemoteCommand::DISABLE: return "DISABLE";
+        case RemoteCommand::DAMPING: return "DAMPING";
+        case RemoteCommand::TOGGLE_RECORD: return "TOGGLE_RECORD";
+        }
+        return "UNKNOWN";
+    }
+
+    static const char* DriverModeName(DriverMode mode)
+    {
+        switch (mode) {
+        case DriverMode::DISABLE: return "DISABLE";
+        case DriverMode::STAND: return "STAND";
+        case DriverMode::RL: return "RL";
+        case DriverMode::DAMPING: return "DAMPING";
+        }
+        return "UNKNOWN";
+    }
+
     std::string FmtFloatVec(const std::vector<float>& v)
     {
         std::ostringstream oss;
@@ -150,21 +175,49 @@ private:
 
         last_remote_cmd_ = cmd;
 
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Remote command detected: %s (driver mode before=%s)",
+            RemoteCommandName(cmd),
+            DriverModeName(core_->GetMode()));
+
         std_msgs::msg::UInt8 msg;
         msg.data = static_cast<uint8_t>(cmd);
         remote_cmd_pub_->publish(msg);
+        RCLCPP_INFO(this->get_logger(), "Published /remote_command: %s", RemoteCommandName(cmd));
 
         switch (cmd) {
         case RemoteCommand::RECOVER_STAND:
-            core_->RequestModeChange(DriverMode::STAND);
+        {
+            bool ok = core_->RequestModeChange(DriverMode::STAND);
+            RCLCPP_INFO(
+                this->get_logger(),
+                "RequestModeChange(STAND) result=%s, driver mode after=%s",
+                ok ? "ok" : "rejected",
+                DriverModeName(core_->GetMode()));
             break;
+        }
         case RemoteCommand::DISABLE:
-            core_->RequestModeChange(DriverMode::DISABLE);
+        {
+            bool ok = core_->RequestModeChange(DriverMode::DISABLE);
+            RCLCPP_INFO(
+                this->get_logger(),
+                "RequestModeChange(DISABLE) result=%s, driver mode after=%s",
+                ok ? "ok" : "rejected",
+                DriverModeName(core_->GetMode()));
             break;
+        }
         case RemoteCommand::DAMPING:
-            core_->RequestModeChange(DriverMode::DAMPING);
+        {
+            bool ok = core_->RequestModeChange(DriverMode::DAMPING);
+            RCLCPP_INFO(
+                this->get_logger(),
+                "RequestModeChange(DAMPING) result=%s, driver mode after=%s",
+                ok ? "ok" : "rejected",
+                DriverModeName(core_->GetMode()));
             RCLCPP_WARN(this->get_logger(), "Damping mode is reserved and may change in a later version.");
             break;
+        }
         case RemoteCommand::SELECT_LOCOMOTION:
             RCLCPP_INFO(this->get_logger(), "Locomotion family selected.");
             break;
@@ -183,12 +236,25 @@ private:
             return RemoteCommand::NONE;
 
         const bool a = core_->GetGamepadButton(0);
-        const bool x = core_->GetGamepadButton(3);
-        const bool y = core_->GetGamepadButton(2);
+        // LOGIC USB gamepad on this machine reports physical X/Y opposite to the
+        // initial assumption, so map X->button 2 and Y->button 3.
+        const bool x = core_->GetGamepadButton(2);
+        const bool y = core_->GetGamepadButton(3);
         const bool lb = core_->GetGamepadButton(4);
         const bool rb = core_->GetGamepadButton(5);
         const bool start = core_->GetGamepadButton(7);
         const bool lt = core_->GetGamepadAxis(2) > 0.5f;
+        const bool rt = core_->GetGamepadAxis(5) > 0.5f;
+
+        if (a || x || y || lb || rb || start || lt || rt) {
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Gamepad state: A=%d X=%d Y=%d LB=%d RB=%d START=%d LT=%.3f RT=%.3f mode=%s",
+                a, x, y, lb, rb, start,
+                core_->GetGamepadAxis(2),
+                core_->GetGamepadAxis(5),
+                DriverModeName(core_->GetMode()));
+        }
 
         if (rb && x)
             return RemoteCommand::DISABLE;

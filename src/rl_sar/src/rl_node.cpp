@@ -76,6 +76,20 @@ public:
     }
 
 private:
+    static const char* RemoteCommandName(RemoteCommand cmd)
+    {
+        switch (cmd) {
+        case RemoteCommand::NONE: return "NONE";
+        case RemoteCommand::RECOVER_STAND: return "RECOVER_STAND";
+        case RemoteCommand::SELECT_LOCOMOTION: return "SELECT_LOCOMOTION";
+        case RemoteCommand::START_DREAMWAQ: return "START_DREAMWAQ";
+        case RemoteCommand::DISABLE: return "DISABLE";
+        case RemoteCommand::DAMPING: return "DAMPING";
+        case RemoteCommand::TOGGLE_RECORD: return "TOGGLE_RECORD";
+        }
+        return "UNKNOWN";
+    }
+
     bool InitRL(const std::string& policy_name)
     {
         if (!rl_.Init(std::string(POLICY_DIR), policy_name)) {
@@ -159,6 +173,13 @@ private:
     void RemoteCommandCallback(const std_msgs::msg::UInt8::SharedPtr msg)
     {
         RemoteCommand cmd = static_cast<RemoteCommand>(msg->data);
+        RCLCPP_INFO(
+            get_logger(),
+            "Received /remote_command: %s (rl_state=%s, locomotion_selected=%s)",
+            RemoteCommandName(cmd),
+            rl_.GetState() == AresRL::State::RUNNING ? "RUNNING" : "STOPPED",
+            locomotion_selected_ ? "true" : "false");
+
         switch (cmd) {
         case RemoteCommand::RECOVER_STAND:
             if (rl_.GetState() != AresRL::State::STOPPED) {
