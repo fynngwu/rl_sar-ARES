@@ -52,10 +52,10 @@ dream_waq/dream_waq:
   default_dof_pos: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
   # Driver config
-  gamepad_scale: 2.0
+  gamepad_scale: 1.0
   gamepad_limits:
-    linear_x: [-2.0, 2.0]
-    linear_y: [-2.0, 2.0]
+    linear_x: [-1.0, 1.0]
+    linear_y: [-1.0, 1.0]
     angular_z: [-0.5, 0.5]
 
   # Joint mapping: topic_to_driver[topic_idx] = driver_idx
