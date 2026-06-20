@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <map>
 
@@ -141,6 +142,19 @@ private:
             cmd.position.push_back(pos);
         }
         motor_command_pub_->publish(cmd);
+
+        auto now_time = now();
+        if (!last_publish_log_time_ ||
+            (now_time - *last_publish_log_time_).seconds() >= 1.0) {
+            last_publish_log_time_ = now_time;
+            RCLCPP_INFO(
+                get_logger(),
+                "Published /motor_command: [%.3f, %.3f, %.3f, ...] rl_state=%s",
+                cmd.position[0],
+                cmd.position[1],
+                cmd.position[2],
+                rl_.GetState() == AresRL::State::RUNNING ? "RUNNING" : "STOPPED");
+        }
     }
 
     void RobotControl()
@@ -304,6 +318,7 @@ private:
     std::map<char, std::string> policy_map_;
     std::string selected_policy_;
     bool locomotion_selected_{false};
+    std::optional<rclcpp::Time> last_publish_log_time_;
 };
 
 int main(int argc, char** argv)

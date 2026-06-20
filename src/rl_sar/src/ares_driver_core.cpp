@@ -307,7 +307,7 @@ public:
             break;
         case DriverMode::DAMPING:
             for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, 0.0f, 10.0f);
+                driver_->SetMITParams(i, 0.0f, 4.0f);
             driver_->EnableAll();
             {
                 std::array<float, NUM_JOINTS> target{};
