@@ -35,6 +35,7 @@ private:
     int fd;
     std::thread read_thread;
     std::atomic<bool> running;
+    std::atomic<bool> connected;
     mutable std::mutex data_mutex;
     float axes[JS_AXIS_LIMIT];
     bool buttons[JS_BUTTON_LIMIT];
