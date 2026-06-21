@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -20,35 +21,24 @@
 
 class AresDriverCore::Impl {
 public:
-    explicit Impl(const std::string& policy_dir, const std::string& policy_name)
-        : running_(true),
-          received_first_command_(false)
-    {
+	    explicit Impl(const std::string& policy_dir, const std::string& policy_name)
+	        : running_(true),
+	          received_first_command_(false)
+	    {
         std::string config_path = policy_dir + "/" + policy_name + "/config.yaml";
         YAML::Node rc = YAML::LoadFile(config_path)[policy_name];
         if (!rc)
             throw std::runtime_error("Missing '" + policy_name + "' in " + config_path);
 
-        config_kp_ = yaml_utils::LoadScalarOrArray(rc["fixed_kp"], NUM_JOINTS);
-        config_kd_ = yaml_utils::LoadScalarOrArray(rc["fixed_kd"], NUM_JOINTS);
-        config_torque_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], NUM_JOINTS);
-        gamepad_scale_ = rc["gamepad_scale"].as<float>();
+	        config_kp_ = yaml_utils::LoadScalarOrArray(rc["fixed_kp"], NUM_JOINTS);
+	        config_kd_ = yaml_utils::LoadScalarOrArray(rc["fixed_kd"], NUM_JOINTS);
+	        config_torque_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], NUM_JOINTS);
+	        gamepad_scale_ = rc["gamepad_scale"].as<float>();
+	        TryReconnectDriver(true);
+	        TryReconnectGamepad(true);
 
-        driver_ = std::make_unique<DogDriver>();
-        for (int i = 0; i < NUM_JOINTS; ++i) {
-            driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
-            driver_->SetTorqueLimit(i, config_torque_[i]);
-        }
-
-        try {
-            gamepad_ = std::make_unique<Gamepad>("/dev/input/js0");
-            gamepad_name_ = gamepad_->GetName();
-        } catch (...) {
-            gamepad_.reset();
-        }
-
-        worker_thread_ = std::thread(&Impl::CommandLoop, this);
-    }
+	        worker_thread_ = std::thread(&Impl::CommandLoop, this);
+	    }
 
     ~Impl()
     {
@@ -57,18 +47,22 @@ public:
             worker_thread_.join();
     }
 
-    void SetTopicCommand(const std::array<float, NUM_JOINTS>& topic_target)
-    {
-        std::lock_guard<std::mutex> lock(cmd_mutex_);
-        latest_target_ = topic_target;
-        received_first_command_ = true;
+	    void SetTopicCommand(const std::array<float, NUM_JOINTS>& topic_target)
+	    {
+	        std::lock_guard<std::mutex> lock(cmd_mutex_);
+	        latest_target_ = topic_target;
+	        received_first_command_ = true;
     }
 
-    JointFeedback GetTopicFeedback() const
-    {
-        auto joint_states = driver_->GetJointStates();
-        JointFeedback feedback;
-        for (int i = 0; i < NUM_JOINTS; ++i) {
+	    JointFeedback GetTopicFeedback() const
+	    {
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        if (!driver_) {
+	            return JointFeedback{};
+	        }
+	        auto joint_states = driver_->GetJointStates();
+	        JointFeedback feedback;
+	        for (int i = 0; i < NUM_JOINTS; ++i) {
             feedback.position[i] = joint_states.position[i];
             feedback.velocity[i] = joint_states.velocity[i];
             feedback.torque[i] = joint_states.torque[i];
@@ -76,17 +70,22 @@ public:
         return feedback;
     }
 
-    ImuData GetImuData() const
-    {
-        auto imu = driver_->GetIMUData();
-        return {imu.angular_velocity, imu.projected_gravity};
-    }
+	    ImuData GetImuData() const
+	    {
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        if (!driver_) {
+	            return ImuData{};
+	        }
+	        auto imu = driver_->GetIMUData();
+	        return {imu.angular_velocity, imu.projected_gravity};
+	    }
 
-    GamepadCommand PollGamepad()
-    {
-        GamepadCommand cmd;
-        if (!gamepad_ || !gamepad_->IsConnected())
-            return cmd;
+	    GamepadCommand PollGamepad()
+	    {
+	        GamepadCommand cmd;
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        if (!gamepad_ || !gamepad_->IsConnected())
+	            return cmd;
 
         if (gamepad_->GetButton(7))
             height_value_ = std::min(HEIGHT_MAX, height_value_ + HEIGHT_STEP);
@@ -101,24 +100,30 @@ public:
         return cmd;
     }
 
-    bool GetGamepadButton(int button) const
-    {
-        return gamepad_ && gamepad_->IsConnected() && gamepad_->GetButton(button);
+	    bool GetGamepadButton(int button) const
+	    {
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        return gamepad_ && gamepad_->IsConnected() && gamepad_->GetButton(button);
+	    }
+
+	    float GetGamepadAxis(int axis) const
+	    {
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        if (!gamepad_ || !gamepad_->IsConnected())
+	            return 0.0f;
+	        return gamepad_->GetAxis(axis);
     }
 
-    float GetGamepadAxis(int axis) const
-    {
-        if (!gamepad_ || !gamepad_->IsConnected())
-            return 0.0f;
-        return gamepad_->GetAxis(axis);
-    }
-
-    void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
-                         const std::vector<float>& torque)
-    {
-        size_t n = std::min({kp.size(), kd.size(), static_cast<size_t>(NUM_JOINTS)});
-        for (size_t i = 0; i < n; ++i) {
-            driver_->SetMITParams(i, kp[i], kd[i]);
+	    void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
+	                         const std::vector<float>& torque)
+	    {
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        if (!driver_) {
+	            return;
+	        }
+	        size_t n = std::min({kp.size(), kd.size(), static_cast<size_t>(NUM_JOINTS)});
+	        for (size_t i = 0; i < n; ++i) {
+	            driver_->SetMITParams(i, kp[i], kd[i]);
         }
         if (!torque.empty()) {
             size_t tn = std::min(torque.size(), static_cast<size_t>(NUM_JOINTS));
@@ -146,10 +151,10 @@ public:
         printf("=============================\n\n");
     }
 
-    bool RequestModeChange(DriverMode target)
-    {
-        std::lock_guard<std::mutex> lock(mode_mutex_);
-        DriverMode cur = mode_.load();
+	    bool RequestModeChange(DriverMode target)
+	    {
+	        std::lock_guard<std::mutex> lock(mode_mutex_);
+	        DriverMode cur = mode_.load();
         if (target == cur)
             return true;
 
@@ -159,11 +164,18 @@ public:
             return false;
         }
 
-        printf("[MODE] %s → %s\n", mode_name(cur), mode_name(target));
-        mode_ = target;
+	        printf("[MODE] %s → %s\n", mode_name(cur), mode_name(target));
+	        mode_ = target;
 
-        switch (target) {
-        case DriverMode::STAND:
+	        std::lock_guard<std::mutex> io_lock(io_mutex_);
+	        if (!driver_) {
+	            printf("[MODE] Driver unavailable, keeping logical mode %s and waiting for reconnect\n",
+	                   mode_name(target));
+	            return true;
+	        }
+
+	        switch (target) {
+	        case DriverMode::STAND:
             for (int i = 0; i < NUM_JOINTS; ++i)
                 driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
             driver_->EnableAll();
@@ -193,8 +205,8 @@ public:
         return true;
     }
 
-    void CommandLoop()
-    {
+	    void CommandLoop()
+	    {
         // Start in DISABLE so the robot stays de-energized until an explicit stand command.
         DriverMode initial = DriverMode::DISABLE;
         mode_ = initial;
@@ -234,46 +246,59 @@ public:
 
         auto next_tick = std::chrono::steady_clock::now();
 
-        while (running_) {
-            // --- Keyboard input ---
-            int key = kbhit();
+	        while (running_) {
+	            MaintainConnections();
+
+	            // --- Keyboard input ---
+	            int key = kbhit();
             if (key > 0) {
                 key = std::tolower(key);
                 handle_key_command(key);
             }
 
             // --- Mode-specific tick ---
-            switch (mode_.load()) {
-            case DriverMode::RL: {
-                std::array<float, NUM_JOINTS> target;
-                {
-                    std::lock_guard<std::mutex> lock(cmd_mutex_);
-                    target = latest_target_;
-                }
+	            switch (mode_.load()) {
+	            case DriverMode::RL: {
+	                std::array<float, NUM_JOINTS> target;
+	                {
+	                    std::lock_guard<std::mutex> lock(cmd_mutex_);
+	                    target = latest_target_;
+	                }
+	                {
+	                    std::lock_guard<std::mutex> lock(io_mutex_);
+	                    if (driver_)
+	                        driver_->SetAllJointPositions(target);
+	                }
 
-                driver_->SetAllJointPositions(target);
-
-                next_tick += RL_PERIOD;
+	                next_tick += RL_PERIOD;
                 std::this_thread::sleep_until(next_tick);
                 if (std::chrono::steady_clock::now() > next_tick + RL_PERIOD)
                     next_tick = std::chrono::steady_clock::now();
                 break;
             }
 
-            case DriverMode::STAND: {
-                if (stand_step_ <= STAND_STEPS) {
-                    float alpha = (float)stand_step_ / STAND_STEPS;
-                    std::array<float, NUM_JOINTS> target;
-                    for (int i = 0; i < NUM_JOINTS; ++i) {
-                        float pos = stand_start_pos_[i] * (1.0f - alpha);
-                        target[i] = pos;
-                    }
-                    driver_->SetAllJointPositions(target);
-                    stand_step_++;
-                } else {
-                    std::array<float, NUM_JOINTS> target{};
-                    driver_->SetAllJointPositions(target);
-                }
+	            case DriverMode::STAND: {
+	                if (stand_step_ <= STAND_STEPS) {
+	                    float alpha = (float)stand_step_ / STAND_STEPS;
+	                    std::array<float, NUM_JOINTS> target;
+	                    for (int i = 0; i < NUM_JOINTS; ++i) {
+	                        float pos = stand_start_pos_[i] * (1.0f - alpha);
+	                        target[i] = pos;
+	                    }
+	                    {
+	                        std::lock_guard<std::mutex> lock(io_mutex_);
+	                        if (driver_)
+	                            driver_->SetAllJointPositions(target);
+	                    }
+	                    stand_step_++;
+	                } else {
+	                    std::array<float, NUM_JOINTS> target{};
+	                    {
+	                        std::lock_guard<std::mutex> lock(io_mutex_);
+	                        if (driver_)
+	                            driver_->SetAllJointPositions(target);
+	                    }
+	                }
                 next_tick = std::chrono::steady_clock::now();
                 std::this_thread::sleep_for(STAND_DT);
                 break;
@@ -325,7 +350,7 @@ public:
         return false;
     }
 
-    static const char* mode_name(DriverMode m)
+	    static const char* mode_name(DriverMode m)
     {
         switch (m) {
         case DriverMode::DISABLE: return "DISABLE";
@@ -334,16 +359,166 @@ public:
         case DriverMode::DAMPING: return "DAMPING";
         }
         return "???";
-    }
+	    }
 
-    std::unique_ptr<DogDriver> driver_;
-    std::unique_ptr<Gamepad> gamepad_;
-    std::string gamepad_name_;
+	    void MaintainConnections()
+	    {
+	        auto now = std::chrono::steady_clock::now();
+
+	        if (now - last_gamepad_probe_ >= kReconnectInterval) {
+	            last_gamepad_probe_ = now;
+	            TryReconnectGamepad(false);
+	        }
+
+	        if (now - last_driver_probe_ >= kReconnectInterval) {
+	            last_driver_probe_ = now;
+	            if (!DriverLooksHealthy())
+	                TryReconnectDriver(false);
+	        }
+	    }
+
+	    bool DriverLooksHealthy()
+	    {
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        if (!driver_)
+	            return false;
+	        if (driver_->IsIMUConnected())
+	            return true;
+	        for (int i = 0; i < NUM_JOINTS; ++i) {
+	            if (driver_->IsJointInitialized(i) || driver_->IsJointOnline(i))
+	                return true;
+	        }
+	        return false;
+	    }
+
+	    void ApplyConfiguredMotorParamsLocked()
+	    {
+	        if (!driver_)
+	            return;
+	        for (int i = 0; i < NUM_JOINTS; ++i) {
+	            driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+	            driver_->SetTorqueLimit(i, config_torque_[i]);
+	        }
+	    }
+
+	    void RestoreModeAfterReconnectLocked()
+	    {
+	        if (!driver_)
+	            return;
+	        switch (mode_.load()) {
+	        case DriverMode::DISABLE:
+	            driver_->DisableAll();
+	            stand_active_ = false;
+	            break;
+	        case DriverMode::STAND:
+	            driver_->EnableAll();
+	            {
+	                auto states = driver_->GetJointStates();
+	                stand_start_pos_ = states.position;
+	            }
+	            stand_step_ = 0;
+	            stand_active_ = true;
+	            break;
+	        case DriverMode::RL:
+	            driver_->EnableAll();
+	            stand_active_ = false;
+	            break;
+	        case DriverMode::DAMPING:
+	            for (int i = 0; i < NUM_JOINTS; ++i)
+	                driver_->SetMITParams(i, 0.0f, 4.0f);
+	            driver_->EnableAll();
+	            driver_->SetAllJointPositions(std::array<float, NUM_JOINTS>{});
+	            stand_active_ = false;
+	            break;
+	        }
+	    }
+
+	    void TryReconnectDriver(bool initial)
+	    {
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        if (driver_ && DriverLooksHealthyUnlocked())
+	            return;
+	        try {
+	            auto new_driver = std::make_unique<DogDriver>();
+	            driver_ = std::move(new_driver);
+	            ApplyConfiguredMotorParamsLocked();
+	            RestoreModeAfterReconnectLocked();
+	            printf("[DRIVER] %s driver connection established (imu=%s)\n",
+	                   initial ? "Initial" : "Recovered",
+	                   driver_->IsIMUConnected() ? "yes" : "no");
+	        } catch (const std::exception& e) {
+	            if (initial || !driver_connected_logged_) {
+	                printf("[DRIVER] Failed to initialize hardware driver: %s\n", e.what());
+	            }
+	            driver_.reset();
+	        } catch (...) {
+	            if (initial || !driver_connected_logged_) {
+	                printf("[DRIVER] Failed to initialize hardware driver: unknown error\n");
+	            }
+	            driver_.reset();
+	        }
+	        driver_connected_logged_ = static_cast<bool>(driver_);
+	    }
+
+	    bool DriverLooksHealthyUnlocked() const
+	    {
+	        if (!driver_)
+	            return false;
+	        if (driver_->IsIMUConnected())
+	            return true;
+	        for (int i = 0; i < NUM_JOINTS; ++i) {
+	            if (driver_->IsJointInitialized(i) || driver_->IsJointOnline(i))
+	                return true;
+	        }
+	        return false;
+	    }
+
+	    void TryReconnectGamepad(bool initial)
+	    {
+	        std::lock_guard<std::mutex> lock(io_mutex_);
+	        if (gamepad_ && gamepad_->IsConnected()) {
+	            if (!gamepad_connected_logged_) {
+	                gamepad_name_ = gamepad_->GetName();
+	                printf("[GAMEPAD] Connected: %s\n", gamepad_name_.c_str());
+	                gamepad_connected_logged_ = true;
+	            }
+	            return;
+	        }
+
+	        gamepad_.reset();
+	        gamepad_name_.clear();
+
+	        try {
+	            auto new_gamepad = std::make_unique<Gamepad>("/dev/input/js0");
+	            if (new_gamepad->IsConnected()) {
+	                gamepad_name_ = new_gamepad->GetName();
+	                gamepad_ = std::move(new_gamepad);
+	                printf("[GAMEPAD] %s connection established: %s\n",
+	                       initial ? "Initial" : "Recovered",
+	                       gamepad_name_.c_str());
+	                gamepad_connected_logged_ = true;
+	                return;
+	            }
+	        } catch (...) {
+	        }
+
+	        if (gamepad_connected_logged_) {
+	            printf("[GAMEPAD] Disconnected: /dev/input/js0\n");
+	        } else if (initial) {
+	            printf("[GAMEPAD] Not available at startup: /dev/input/js0\n");
+	        }
+	        gamepad_connected_logged_ = false;
+	    }
+
+	    std::unique_ptr<DogDriver> driver_;
+	    std::unique_ptr<Gamepad> gamepad_;
+	    std::string gamepad_name_;
 
     std::thread worker_thread_;
-    mutable std::mutex cmd_mutex_;
-    mutable std::mutex mode_mutex_;
-    std::array<float, NUM_JOINTS> latest_target_{};
+	    mutable std::mutex cmd_mutex_;
+	    mutable std::mutex mode_mutex_;
+	    mutable std::mutex io_mutex_;
+	    std::array<float, NUM_JOINTS> latest_target_{};
     std::atomic<bool> received_first_command_;
     std::atomic<DriverMode> mode_{DriverMode::DISABLE};
     std::atomic<bool> running_;
@@ -356,11 +531,16 @@ public:
     std::vector<float> config_kd_;
     std::vector<float> config_torque_;
     float gamepad_scale_ = 0.0f;
-    static constexpr float HEIGHT_MIN = -0.05f;
-    static constexpr float HEIGHT_MAX = 0.05f;
-    static constexpr float HEIGHT_STEP = 0.005f;
-    float height_value_ = 0.0f;
-};
+	    static constexpr float HEIGHT_MIN = -0.05f;
+	    static constexpr float HEIGHT_MAX = 0.05f;
+	    static constexpr float HEIGHT_STEP = 0.005f;
+	    float height_value_ = 0.0f;
+	    static constexpr auto kReconnectInterval = std::chrono::milliseconds(1000);
+	    std::chrono::steady_clock::time_point last_gamepad_probe_{};
+	    std::chrono::steady_clock::time_point last_driver_probe_{};
+	    bool gamepad_connected_logged_ = false;
+	    bool driver_connected_logged_ = false;
+	};
 
 AresDriverCore::AresDriverCore(const std::string& policy_dir, const std::string& policy_name)
     : impl_(std::make_unique<Impl>(policy_dir, policy_name))
@@ -447,7 +627,8 @@ bool AresDriverCore::imu_connected() const
 
 bool AresDriverCore::gamepad_connected() const
 {
-    return static_cast<bool>(impl_->gamepad_);
+    std::lock_guard<std::mutex> lock(impl_->io_mutex_);
+    return impl_->gamepad_ && impl_->gamepad_->IsConnected();
 }
 
 const std::string& AresDriverCore::gamepad_name() const

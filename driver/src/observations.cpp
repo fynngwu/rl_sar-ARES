@@ -222,13 +222,14 @@ std::vector<float> JointComponent::GetObs() const {
 
 // Implementations for ActionComponent, CommandComponent, RoboObsFrame, RoboObs
 
-Gamepad::Gamepad(const char* dev) : fd(-1), running(true) {
+Gamepad::Gamepad(const char* dev) : fd(-1), running(true), connected(false) {
     fd = open(dev, O_RDONLY | O_NONBLOCK);
     if (fd < 0) {
         std::cerr << "Failed to open gamepad device: " << dev << std::endl;
         running = false;
         return;
     }
+    connected = true;
     std::memset(axes, 0, sizeof(axes));
     std::memset(buttons, 0, sizeof(buttons));
     read_thread = std::thread(&Gamepad::ReadLoop, this);
@@ -257,7 +258,7 @@ bool Gamepad::GetButton(int button) const {
 }
 
 bool Gamepad::IsConnected() const {
-    return fd >= 0;
+    return connected.load();
 }
 
 std::string Gamepad::GetName() const {
@@ -271,7 +272,8 @@ void Gamepad::ReadLoop() {
     struct js_event event;
     while (running) {
         bool any_read = false;
-        while (read(fd, &event, sizeof(event)) == sizeof(event)) {
+        ssize_t read_size = 0;
+        while ((read_size = read(fd, &event, sizeof(event))) == sizeof(event)) {
             any_read = true;
             if (event.type & JS_EVENT_AXIS) {
                 if (event.number < JS_AXIS_LIMIT) {
@@ -284,6 +286,15 @@ void Gamepad::ReadLoop() {
                     buttons[event.number] = event.value;
                 }
             }
+        }
+        if (read_size < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            connected = false;
+            running = false;
+            if (fd >= 0) {
+                close(fd);
+                fd = -1;
+            }
+            break;
         }
         if (!any_read && fd >= 0) {
             // No data available
@@ -374,4 +385,3 @@ std::vector<float> RoboObs::GetSingleObs() const {
     if (history.empty()) return std::vector<float>(obs_dim, 0.0f);
     return history.back();
 }
-
