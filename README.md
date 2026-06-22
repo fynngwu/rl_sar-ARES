@@ -20,6 +20,44 @@ ares dream_waq/dream_waq               # 终端 2 — RL 推理
 
 当前默认接入 `dream_waq/dream_waq` 作为唯一 locomotion policy。开机后默认处于 `DISABLE`，通过 LOGIC 手柄进入站立、启动策略、停止策略、录制数据等。Ctrl+C 停止。
 
+## systemd 自启
+
+```bash
+# 安装（默认策略 dream_waq/dream_waq）
+sudo ./install_service.sh dream_waq/dream_waq
+
+# 启动
+sudo systemctl start ares_rl.service
+
+# 查看状态
+sudo systemctl status ares_rl.service
+
+# 查看日志
+journalctl -u ares_rl.service -f
+
+# 停止
+sudo systemctl stop ares_rl.service
+
+# 移除（同时清除 bashrc aliases）
+sudo ./install_service.sh --remove
+```
+
+安装脚本会自动在 `~/.bashrc` 中添加管理 aliases（带幂等检查，不会重复添加）：
+
+| Alias | 功能 |
+|-------|------|
+| `ares-start` | 启动服务 |
+| `ares-stop` | 停止服务 |
+| `ares-restart` | 重启服务 |
+| `ares-status` | 查看状态 |
+| `ares-logs` | 实时日志 |
+| `ares-enable` | 设为开机自启 |
+| `ares-disable` | 禁用开机自启 |
+
+安装后执行 `source ~/.bashrc` 或开新终端即可使用 aliases。
+
+服务启动前会自动执行 `~/.local/bin/start`（`ExecStartPre`），用于初始化 CAN 通信等硬件前置操作。
+
 ## 遥控指令
 
 当前使用 LOGIC USB 手柄（`/dev/input/js0`）遥控机器人，按键定义参考 `Loco_Intern_SDK`。
@@ -355,28 +393,6 @@ float dt = rl.GetDt();                      // 例如 0.005
 int dec = rl.GetDecimation();               // 例如 4
 double ms = rl.GetInferenceTimeMs();
 int count = rl.GetInferenceCount();
-```
-
-## systemd 自启
-
-参考 `Loco_Intern_SDK/install_service.sh`，本仓库现在也提供了安装脚本：
-
-```bash
-sudo ./install_service.sh dream_waq/dream_waq
-```
-
-安装后可用：
-
-```bash
-sudo systemctl start ares_rl.service
-systemctl status ares_rl.service
-journalctl -u ares_rl.service -f
-```
-
-移除：
-
-```bash
-sudo ./install_service.sh --remove
 ```
 
 ## 遥控实现说明
