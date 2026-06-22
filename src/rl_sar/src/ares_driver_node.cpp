@@ -9,14 +9,12 @@
 #include "std_msgs/msg/u_int8.hpp"
 
 #include "ares_driver_core.hpp"
-#include "remote_command.hpp"
 
 #include <array>
 #include <chrono>
 #include <functional>
 #include <iomanip>
 #include <memory>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -50,7 +48,7 @@ public:
         motor_feedback_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/motor_feedback", 10);
         imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("/imu/data", 10);
         xbox_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/xbox_vel", 10);
-        remote_cmd_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/remote_command", 10);
+        driver_mode_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/driver_mode", 10);
 
         motor_command_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
             "/motor_command", 10,
@@ -69,20 +67,6 @@ public:
     }
 
 private:
-    static const char* RemoteCommandName(RemoteCommand cmd)
-    {
-        switch (cmd) {
-        case RemoteCommand::NONE: return "NONE";
-        case RemoteCommand::RECOVER_STAND: return "RECOVER_STAND";
-        case RemoteCommand::SELECT_LOCOMOTION: return "SELECT_LOCOMOTION";
-        case RemoteCommand::START_DREAMWAQ: return "START_DREAMWAQ";
-        case RemoteCommand::DISABLE: return "DISABLE";
-        case RemoteCommand::DAMPING: return "DAMPING";
-        case RemoteCommand::TOGGLE_RECORD: return "TOGGLE_RECORD";
-        }
-        return "UNKNOWN";
-    }
-
     static const char* DriverModeName(DriverMode mode)
     {
         switch (mode) {
@@ -113,17 +97,6 @@ private:
         for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i)
             target[i] = msg->position[i];
         core_->SetTopicCommand(target);
-
-        if (pending_rl_enable_ && core_->GetMode() == DriverMode::STAND) {
-            bool ok = core_->RequestModeChange(DriverMode::RL);
-            RCLCPP_INFO(
-                this->get_logger(),
-                "First /motor_command received after start request. RequestModeChange(RL)=%s mode=%s",
-                ok ? "ok" : "rejected",
-                DriverModeName(core_->GetMode()));
-            if (ok)
-                pending_rl_enable_ = false;
-        }
     }
 
     void MotorParamCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
@@ -143,8 +116,8 @@ private:
 
     void FeedbackTimerCallback()
     {
-        PublishRemoteCommand();
-        LogDriverState();
+        PublishDriverMode();
+        DetectGamepadCommand();
 
         auto joint_states = core_->GetTopicFeedback();
         sensor_msgs::msg::JointState feedback_msg;
@@ -181,64 +154,17 @@ private:
         }
     }
 
-    void PublishRemoteCommand()
+    void PublishDriverMode()
     {
-        RemoteCommand cmd = DetectRemoteCommand();
-        if (cmd == RemoteCommand::NONE) {
-            last_remote_cmd_ = RemoteCommand::NONE;
-            return;
-        }
-        if (cmd == last_remote_cmd_)
-            return;
-
-        last_remote_cmd_ = cmd;
-        RCLCPP_INFO(
-            this->get_logger(),
-            "Remote command detected: %s (driver mode=%s)",
-            RemoteCommandName(cmd),
-            DriverModeName(core_->GetMode()));
-
         std_msgs::msg::UInt8 msg;
-        msg.data = static_cast<uint8_t>(cmd);
-        remote_cmd_pub_->publish(msg);
-
-        switch (cmd) {
-        case RemoteCommand::RECOVER_STAND:
-            pending_rl_enable_ = false;
-            (void)core_->RequestModeChange(DriverMode::STAND);
-            break;
-        case RemoteCommand::START_DREAMWAQ:
-            if (core_->GetMode() != DriverMode::STAND) {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "Ignoring RL start because driver mode is %s, expected STAND",
-                    DriverModeName(core_->GetMode()));
-            } else {
-                pending_rl_enable_ = true;
-                RCLCPP_INFO(
-                    this->get_logger(),
-                    "RL start armed. Waiting for first /motor_command before switching driver to RL.");
-            }
-            break;
-        case RemoteCommand::DISABLE:
-            pending_rl_enable_ = false;
-            (void)core_->RequestModeChange(DriverMode::DISABLE);
-            break;
-        case RemoteCommand::DAMPING:
-            pending_rl_enable_ = false;
-            (void)core_->RequestModeChange(DriverMode::DAMPING);
-            break;
-        case RemoteCommand::SELECT_LOCOMOTION:
-        case RemoteCommand::TOGGLE_RECORD:
-        case RemoteCommand::NONE:
-            break;
-        }
+        msg.data = static_cast<uint8_t>(core_->GetMode());
+        driver_mode_pub_->publish(msg);
     }
 
-    RemoteCommand DetectRemoteCommand()
+    void DetectGamepadCommand()
     {
         if (!core_->gamepad_connected())
-            return RemoteCommand::NONE;
+            return;
 
         const bool a = core_->GetGamepadButton(0);
         const bool x = core_->GetGamepadButton(2);
@@ -248,30 +174,27 @@ private:
         const bool start = core_->GetGamepadButton(7);
         const bool lt = core_->GetGamepadAxis(2) > 0.5f;
 
-        if (rb && x)
-            return RemoteCommand::DISABLE;
-        if (lb && rb)
-            return RemoteCommand::DAMPING;
-        if (lb && start)
-            return RemoteCommand::TOGGLE_RECORD;
-        if (lb && a)
-            return RemoteCommand::RECOVER_STAND;
-        if (lb && y)
-            return RemoteCommand::SELECT_LOCOMOTION;
-        if (lt && y)
-            return RemoteCommand::START_DREAMWAQ;
-        return RemoteCommand::NONE;
-    }
-
-    void LogDriverState()
-    {
-        auto now = this->now();
-        if (!last_state_log_time_ ||
-            (now - *last_state_log_time_).seconds() >= 1.0 ||
-            core_->GetMode() != last_logged_mode_) {
-            last_state_log_time_ = now;
-            last_logged_mode_ = core_->GetMode();
-            RCLCPP_INFO(this->get_logger(), "Driver state: mode=%s", DriverModeName(last_logged_mode_));
+        if (rb && x) {
+            RCLCPP_INFO(get_logger(), "[Gamepad] RB+X → DISABLE");
+            (void)core_->RequestModeChange(DriverMode::DISABLE);
+        } else if (lb && rb) {
+            RCLCPP_INFO(get_logger(), "[Gamepad] LB+RB → DAMPING");
+            (void)core_->RequestModeChange(DriverMode::DAMPING);
+        } else if (lb && start) {
+            RCLCPP_INFO(get_logger(), "[Gamepad] LB+Start → TOGGLE_RECORD");
+        } else if (lb && a) {
+            RCLCPP_INFO(get_logger(), "[Gamepad] LB+A → STAND");
+            (void)core_->RequestModeChange(DriverMode::STAND);
+        } else if (lb && y) {
+            RCLCPP_INFO(get_logger(), "[Gamepad] LB+Y → SELECT_LOCOMOTION");
+        } else if (lt && y) {
+            if (core_->GetMode() == DriverMode::STAND) {
+                RCLCPP_INFO(get_logger(), "[Gamepad] LT+Y → RL");
+                (void)core_->RequestModeChange(DriverMode::RL);
+            } else {
+                RCLCPP_WARN(get_logger(), "[Gamepad] LT+Y → ignored (need STAND, current=%s)",
+                            DriverModeName(core_->GetMode()));
+            }
         }
     }
 
@@ -280,14 +203,10 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_pub_;
-    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr remote_cmd_pub_;
+    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr driver_mode_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_command_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
     rclcpp::TimerBase::SharedPtr feedback_timer_;
-    RemoteCommand last_remote_cmd_{RemoteCommand::NONE};
-    std::optional<rclcpp::Time> last_state_log_time_;
-    DriverMode last_logged_mode_{DriverMode::DISABLE};
-    bool pending_rl_enable_{false};
 };
 
 int main(int argc, char **argv)

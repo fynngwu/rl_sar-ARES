@@ -1,5 +1,4 @@
 #include "ares_driver_core.hpp"
-#include "keyboard_helper.hpp"
 #include "yaml_utils.hpp"
 
 #include "dog_driver.hpp"
@@ -12,7 +11,6 @@
 #include <cmath>
 #include <cstdio>
 #include <mutex>
-#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -22,8 +20,7 @@
 class AresDriverCore::Impl {
 public:
 	    explicit Impl(const std::string& policy_dir, const std::string& policy_name)
-	        : running_(true),
-	          received_first_command_(false)
+	        : running_(true)
 	    {
         std::string config_path = policy_dir + "/" + policy_name + "/config.yaml";
         YAML::Node rc = YAML::LoadFile(config_path)[policy_name];
@@ -34,7 +31,10 @@ public:
 	        config_kd_ = yaml_utils::LoadScalarOrArray(rc["fixed_kd"], NUM_JOINTS);
 	        config_torque_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], NUM_JOINTS);
 	        gamepad_scale_ = rc["gamepad_scale"].as<float>();
-	        TryReconnectDriver(true);
+	        {
+	            std::lock_guard<std::mutex> lock(io_mutex_);
+	            TryCreateDriverLocked();
+	        }
 	        TryReconnectGamepad(true);
 
 	        worker_thread_ = std::thread(&Impl::CommandLoop, this);
@@ -51,7 +51,6 @@ public:
 	    {
 	        std::lock_guard<std::mutex> lock(cmd_mutex_);
 	        latest_target_ = topic_target;
-	        received_first_command_ = true;
     }
 
 	    JointFeedback GetTopicFeedback() const
@@ -144,10 +143,7 @@ public:
     {
         printf("\n=== ARES Driver Mode Help ===\n");
         printf("Current mode: %s\n", mode_name(mode_.load()));
-        printf("Keys:\n");
-        printf("  [s] STAND   — stand up (from DISABLE or RL)\n");
-        printf("  [r] RL      — run RL policy (from STAND only)\n");
-        printf("  [d] DISABLE — disable motors (from STAND or RL)\n");
+        printf("Controlled via /remote_command topic (gamepad)\n");
         printf("=============================\n\n");
     }
 
@@ -207,36 +203,10 @@ public:
 
 	    void CommandLoop()
 	    {
-        // Start in DISABLE so the robot stays de-energized until an explicit stand command.
         DriverMode initial = DriverMode::DISABLE;
         mode_ = initial;
 
-        printf("\n[MODE] Initial state: %s\n", mode_name(initial));
-        printf("Keys: [s] Stand  [r] RL  [d] Disable\n\n");
-
-        if (initial == DriverMode::RL) {
-            while (running_ && !received_first_command_.load()) {
-                int key = kbhit();
-                if (key > 0) {
-                    key = std::tolower(key);
-                    handle_key_command(key);
-                    if (mode_ != DriverMode::RL)
-                        break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-            if (!running_) return;
-        } else if (initial == DriverMode::STAND) {
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
-            driver_->EnableAll();
-            {
-                auto states = driver_->GetJointStates();
-                stand_start_pos_ = states.position;
-            }
-            stand_step_ = 0;
-            stand_active_ = true;
-        }
+        printf("[MODE] Initial state: %s\n", mode_name(initial));
 
         // --- Main loop ---
         constexpr auto RL_PERIOD = std::chrono::milliseconds(5);
@@ -249,15 +219,9 @@ public:
 	        while (running_) {
 	            MaintainConnections();
 
-	            // --- Keyboard input ---
-	            int key = kbhit();
-            if (key > 0) {
-                key = std::tolower(key);
-                handle_key_command(key);
-            }
+	            DriverMode cur = mode_.load();
 
-            // --- Mode-specific tick ---
-	            switch (mode_.load()) {
+	            switch (cur) {
 	            case DriverMode::RL: {
 	                std::array<float, NUM_JOINTS> target;
 	                {
@@ -317,24 +281,6 @@ public:
         }
     }
 
-    void handle_key_command(int key)
-    {
-        DriverMode cur = mode_.load();
-        DriverMode tgt = cur;
-
-        if (key == 's' && cur != DriverMode::STAND)
-            tgt = DriverMode::STAND;
-        else if (key == 'r')
-            tgt = DriverMode::RL;
-        else if (key == 'd')
-            tgt = DriverMode::DISABLE;
-
-        if (tgt == cur)
-            return;
-
-        (void)RequestModeChange(tgt);
-    }
-
     static bool transition_allowed(DriverMode from, DriverMode to)
     {
         if (from == DriverMode::DISABLE && to == DriverMode::STAND) return true;
@@ -365,30 +311,70 @@ public:
 	    {
 	        auto now = std::chrono::steady_clock::now();
 
+	        if (now - last_driver_probe_ >= kReconnectInterval) {
+	            last_driver_probe_ = now;
+	            std::lock_guard<std::mutex> lock(io_mutex_);
+	            if (!driver_) {
+	                TryCreateDriverLocked();
+	            } else if (!driver_->IsHealthy()) {
+	                LogAndReconnectDriverLocked();
+	            }
+	        }
+
 	        if (now - last_gamepad_probe_ >= kReconnectInterval) {
 	            last_gamepad_probe_ = now;
 	            TryReconnectGamepad(false);
 	        }
+	    }
 
-	        if (now - last_driver_probe_ >= kReconnectInterval) {
-	            last_driver_probe_ = now;
-	            if (!DriverLooksHealthy())
-	                TryReconnectDriver(false);
+	    void TryCreateDriverLocked()
+	    {
+	        printf("[DRIVER] Driver not available. Creating new instance...\n");
+	        try {
+	            driver_ = std::make_unique<DogDriver>();
+	            ApplyConfiguredMotorParamsLocked();
+	            RestoreModeAfterReconnectLocked();
+	            printf("[DRIVER] Connection established (IMU=%s, Motors=%d/%d)\n",
+	                   driver_->IsIMUConnected() ? "yes" : "no",
+	                   driver_->OnlineMotorCount(), NUM_JOINTS);
+	        } catch (const std::exception& e) {
+	            printf("[DRIVER] Failed to create: %s\n", e.what());
+	            driver_.reset();
+	        } catch (...) {
+	            printf("[DRIVER] Failed to create: unknown error\n");
+	            driver_.reset();
 	        }
 	    }
 
-	    bool DriverLooksHealthy()
+	    void LogAndReconnectDriverLocked()
 	    {
-	        std::lock_guard<std::mutex> lock(io_mutex_);
-	        if (!driver_)
-	            return false;
-	        if (driver_->IsIMUConnected())
-	            return true;
-	        for (int i = 0; i < NUM_JOINTS; ++i) {
-	            if (driver_->IsJointInitialized(i) || driver_->IsJointOnline(i))
-	                return true;
+	        bool imu_ok = driver_->IsIMUConnected();
+	        int online = driver_->OnlineMotorCount();
+	        printf("[DRIVER] Health check FAILED: IMU=%s, Motors=%d/%d online. "
+	               "Reconnecting CAN+motors+IMU...\n",
+	               imu_ok ? "yes" : "no", online, NUM_JOINTS);
+
+	        bool ok = false;
+	        try {
+	            ok = driver_->ReconnectAll();
+	        } catch (const std::exception& e) {
+	            printf("[DRIVER] ReconnectAll exception: %s\n", e.what());
+	        } catch (...) {
+	            printf("[DRIVER] ReconnectAll exception: unknown error\n");
 	        }
-	        return false;
+
+	        if (ok) {
+	            ApplyConfiguredMotorParamsLocked();
+	            RestoreModeAfterReconnectLocked();
+	            printf("[DRIVER] Reconnected successfully (IMU=%s, Motors=%d/%d)\n",
+	                   driver_->IsIMUConnected() ? "yes" : "no",
+	                   driver_->OnlineMotorCount(), NUM_JOINTS);
+	        } else {
+	            printf("[DRIVER] Reconnect failed, will retry next cycle "
+	                   "(IMU=%s, Motors=%d/%d)\n",
+	                   driver_->IsIMUConnected() ? "yes" : "no",
+	                   driver_->OnlineMotorCount(), NUM_JOINTS);
+	        }
 	    }
 
 	    void ApplyConfiguredMotorParamsLocked()
@@ -433,46 +419,6 @@ public:
 	        }
 	    }
 
-	    void TryReconnectDriver(bool initial)
-	    {
-	        std::lock_guard<std::mutex> lock(io_mutex_);
-	        if (driver_ && DriverLooksHealthyUnlocked())
-	            return;
-	        try {
-	            auto new_driver = std::make_unique<DogDriver>();
-	            driver_ = std::move(new_driver);
-	            ApplyConfiguredMotorParamsLocked();
-	            RestoreModeAfterReconnectLocked();
-	            printf("[DRIVER] %s driver connection established (imu=%s)\n",
-	                   initial ? "Initial" : "Recovered",
-	                   driver_->IsIMUConnected() ? "yes" : "no");
-	        } catch (const std::exception& e) {
-	            if (initial || !driver_connected_logged_) {
-	                printf("[DRIVER] Failed to initialize hardware driver: %s\n", e.what());
-	            }
-	            driver_.reset();
-	        } catch (...) {
-	            if (initial || !driver_connected_logged_) {
-	                printf("[DRIVER] Failed to initialize hardware driver: unknown error\n");
-	            }
-	            driver_.reset();
-	        }
-	        driver_connected_logged_ = static_cast<bool>(driver_);
-	    }
-
-	    bool DriverLooksHealthyUnlocked() const
-	    {
-	        if (!driver_)
-	            return false;
-	        if (driver_->IsIMUConnected())
-	            return true;
-	        for (int i = 0; i < NUM_JOINTS; ++i) {
-	            if (driver_->IsJointInitialized(i) || driver_->IsJointOnline(i))
-	                return true;
-	        }
-	        return false;
-	    }
-
 	    void TryReconnectGamepad(bool initial)
 	    {
 	        std::lock_guard<std::mutex> lock(io_mutex_);
@@ -485,6 +431,15 @@ public:
 	            return;
 	        }
 
+	        if (gamepad_connected_logged_) {
+	            printf("[GAMEPAD] Disconnected. Reconnecting at /dev/input/js0...\n");
+	            gamepad_connected_logged_ = false;
+	        } else if (initial) {
+	            printf("[GAMEPAD] Not available at startup. Retrying at /dev/input/js0...\n");
+	        } else {
+	            printf("[GAMEPAD] Not connected. Retrying at /dev/input/js0...\n");
+	        }
+
 	        gamepad_.reset();
 	        gamepad_name_.clear();
 
@@ -493,21 +448,12 @@ public:
 	            if (new_gamepad->IsConnected()) {
 	                gamepad_name_ = new_gamepad->GetName();
 	                gamepad_ = std::move(new_gamepad);
-	                printf("[GAMEPAD] %s connection established: %s\n",
-	                       initial ? "Initial" : "Recovered",
-	                       gamepad_name_.c_str());
+	                printf("[GAMEPAD] Connected: %s\n", gamepad_name_.c_str());
 	                gamepad_connected_logged_ = true;
 	                return;
 	            }
 	        } catch (...) {
 	        }
-
-	        if (gamepad_connected_logged_) {
-	            printf("[GAMEPAD] Disconnected: /dev/input/js0\n");
-	        } else if (initial) {
-	            printf("[GAMEPAD] Not available at startup: /dev/input/js0\n");
-	        }
-	        gamepad_connected_logged_ = false;
 	    }
 
 	    std::unique_ptr<DogDriver> driver_;
@@ -519,7 +465,6 @@ public:
 	    mutable std::mutex mode_mutex_;
 	    mutable std::mutex io_mutex_;
 	    std::array<float, NUM_JOINTS> latest_target_{};
-    std::atomic<bool> received_first_command_;
     std::atomic<DriverMode> mode_{DriverMode::DISABLE};
     std::atomic<bool> running_;
 
@@ -622,7 +567,8 @@ float AresDriverCore::gamepad_scale() const
 
 bool AresDriverCore::imu_connected() const
 {
-    return impl_->driver_->IsIMUConnected();
+    std::lock_guard<std::mutex> lock(impl_->io_mutex_);
+    return impl_->driver_ && impl_->driver_->IsIMUConnected();
 }
 
 bool AresDriverCore::gamepad_connected() const

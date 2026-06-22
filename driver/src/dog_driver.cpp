@@ -10,6 +10,10 @@ static constexpr const char* kCanNames[4] = {"can0", "can1", "can2", "can3"};
 static constexpr const char* kIMUDev = "/dev/ttyCH341USB0";
 
 DogDriver::DogDriver() {
+    Init();
+}
+
+void DogDriver::Init() {
     for (int leg = 0; leg < NUM_LEGS; ++leg) {
         can_interfaces_[leg] = std::make_shared<CANInterface>(kCanNames[leg]);
     }
@@ -22,8 +26,18 @@ DogDriver::DogDriver() {
 
     motor_initialized_.fill(false);
 
+    bool any_can_open = false;
+    for (int leg = 0; leg < NUM_LEGS; ++leg) {
+        if (can_interfaces_[leg] && can_interfaces_[leg]->IsOpen())
+            any_can_open = true;
+    }
+    if (!any_can_open) {
+        std::cerr << "[DogDriver] No CAN interfaces available, skipping motor init" << std::endl;
+    }
+
     std::cout << "[DogDriver] Binding motors..." << std::endl;
     for (int leg = 0; leg < NUM_LEGS; ++leg) {
+        bool can_ok = can_interfaces_[leg] && can_interfaces_[leg]->IsOpen();
         for (int j = 0; j < JOINTS_PER_LEG; ++j) {
             int global_idx = leg + j * NUM_LEGS;
             auto motor_info = std::make_unique<RobstrideController::MotorInfo>();
@@ -35,6 +49,12 @@ DogDriver::DogDriver() {
             motor_info->max_kd = 5.0f;
             int idx = motor_controller_->BindMotor(kCanNames[leg], std::move(motor_info));
             motor_indices_[global_idx] = idx;
+
+            if (!can_ok) {
+                std::cout << "[DogDriver] Motor " << global_idx
+                          << " skipped (CAN " << kCanNames[leg] << " unavailable)" << std::endl;
+                continue;
+            }
 
             try {
                 motor_controller_->EnableMotor(idx);
@@ -72,6 +92,28 @@ DogDriver::DogDriver() {
     }
     std::cout << "[DogDriver] Ready: " << online_count << "/" << NUM_JOINTS
               << " motors initialized" << std::endl;
+}
+
+bool DogDriver::ReconnectAll() {
+    std::cout << "[DogDriver] Reconnecting all hardware (CAN+motors+IMU)..." << std::endl;
+
+    motor_controller_.reset();
+    for (int leg = 0; leg < NUM_LEGS; ++leg)
+        can_interfaces_[leg].reset();
+    imu_.reset();
+    imu_connected_ = false;
+    motor_initialized_.fill(false);
+
+    try {
+        Init();
+    } catch (const std::exception& e) {
+        std::cerr << "[DogDriver] ReconnectAll: Init failed: " << e.what() << std::endl;
+        return false;
+    } catch (...) {
+        std::cerr << "[DogDriver] ReconnectAll: Init failed: unknown error" << std::endl;
+        return false;
+    }
+    return IsHealthy();
 }
 
 DogDriver::~DogDriver() = default;
@@ -222,4 +264,23 @@ bool DogDriver::IsJointInitialized(int joint_idx) const {
 
 bool DogDriver::IsIMUConnected() const {
     return imu_connected_;
+}
+
+bool DogDriver::IsHealthy() const {
+    if (!imu_connected_)
+        return false;
+    for (int i = 0; i < NUM_JOINTS; ++i) {
+        if (!motor_initialized_[i] || !motor_controller_->IsMotorOnline(motor_indices_[i]))
+            return false;
+    }
+    return true;
+}
+
+int DogDriver::OnlineMotorCount() const {
+    int count = 0;
+    for (int i = 0; i < NUM_JOINTS; ++i) {
+        if (motor_initialized_[i] && motor_controller_->IsMotorOnline(motor_indices_[i]))
+            ++count;
+    }
+    return count;
 }

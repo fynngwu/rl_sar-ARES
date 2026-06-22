@@ -203,7 +203,7 @@ target_link_libraries(rl_core PUBLIC
 
 # executable for ARES RL inference node (ROS2 topic interface)
 if(SYSTEM_TYPE STREQUAL "Linux")
-    add_executable(ares src/rl_node.cpp src/keyboard_helper.cpp)
+    add_executable(ares src/rl_node.cpp)
     target_link_libraries(ares
         rl_core
         ${YAML_CPP_LIBRARIES}
@@ -214,7 +214,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
     )
 
 if(DOG_DRIVER_LIB)
-        add_library(ares_driver_core STATIC src/ares_driver_core.cpp src/keyboard_helper.cpp)
+        add_library(ares_driver_core STATIC src/ares_driver_core.cpp)
         target_include_directories(ares_driver_core PUBLIC include)
         target_link_libraries(ares_driver_core
             dog_driver

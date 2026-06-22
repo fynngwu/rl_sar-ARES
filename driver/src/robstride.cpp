@@ -65,7 +65,7 @@ static bool HandleFault(uint8_t motor_id, uint16_t fault) {
         }
     }
     std::cout << std::endl;
-    return (fault & (1u << 1)) != 0;
+    return fault != 0;
 }
 
 static bool HandleErrorFeedback(uint8_t motor_id, const struct can_frame *frame) {
@@ -110,7 +110,7 @@ static bool HandleErrorFeedback(uint8_t motor_id, const struct can_frame *frame)
         std::cout << " warning_bit0(motor-over-temperature-warning)";
     }
     std::cout << std::endl;
-    return (fault & ((1u << 4) | (1u << 5) | (1u << 16))) != 0;
+    return (fault != 0 || warning != 0);
 }
 
 void RobstrideController::HandleCANMessage(const struct device *dev, struct can_frame *frame) {
@@ -140,10 +140,9 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
                 motor.last_online_time = std::chrono::steady_clock::now();
                 motor.error_code = reserved & 0x3F;
                 motor.pattern = (reserved >> 6) & 0x03;
-                bool phase_current_fault = HandleFault(motor.motor_id, motor.error_code);
-                if (phase_current_fault) {
-                    std::cout << "[Robstride] Motor " << motor.motor_id
-                              << " phase-current fault, clear and re-enable" << std::endl;
+                bool has_fault = HandleFault(motor.motor_id, motor.error_code);
+                if (has_fault) {
+                    DisableMotor(i);
                     ClearMotor(i);
                     EnableMotor(i);
                 }
@@ -175,10 +174,9 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
             if (motor.motor_id == motor_id) {
                 motor.online = true;
                 motor.last_online_time = std::chrono::steady_clock::now();
-                bool phase_current_fault = HandleErrorFeedback(motor.motor_id, frame);
-                if (phase_current_fault) {
-                    std::cout << "[Robstride] Motor " << motor.motor_id
-                              << " phase-current fault, clear and re-enable" << std::endl;
+                bool has_error = HandleErrorFeedback(motor.motor_id, frame);
+                if (has_error) {
+                    DisableMotor(i);
                     ClearMotor(i);
                     EnableMotor(i);
                 }
@@ -199,17 +197,9 @@ RobstrideController::RobstrideController() : running(false) {
                 for (size_t i = 0; i < motor_data.size(); ++i) {
                     auto& motor = motor_data[i];
                     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - motor.last_online_time).count();
-                    bool was_online = motor.online;
                     if (duration > 100) {
                         motor.online = false;
-                        if (was_online) {
-                            std::cout << "[Robstride] Motor " << motor.motor_id << " offline" << std::endl;
-                        }
-                        EnableMotor(i);
                     } else {
-                        if (!was_online) {
-                            std::cout << "[Robstride] Motor " << motor.motor_id << " online (recovered)" << std::endl;
-                        }
                         motor.online = true;
                     }
                 }

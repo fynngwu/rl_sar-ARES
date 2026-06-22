@@ -8,6 +8,7 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 #include <mutex>
+#include <iostream>
 
 CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1), if_name(can_if) {
     struct sockaddr_can addr;
@@ -51,7 +52,12 @@ CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1),
             int nbytes = read(can_socket, &frame, sizeof(struct can_frame));
 
             if (nbytes < 0) {
-                if (errno == EBADF) break;
+                if (errno == EBADF || errno == ENODEV || errno == ENOTCONN) {
+                    std::cerr << "[CANInterface] " << if_name
+                              << " read error (errno=" << errno
+                              << "), exiting RX thread" << std::endl;
+                    break;
+                }
                 continue;
             }
 
@@ -106,6 +112,10 @@ CANInterface::~CANInterface() {
 
 const char* CANInterface::GetName() const {
     return if_name.c_str();
+}
+
+bool CANInterface::IsOpen() const {
+    return can_socket >= 0;
 }
 
 int CANInterface::SendMessage(const struct can_frame* frame) {
