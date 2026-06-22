@@ -91,8 +91,8 @@ public:
     DogDriver();
     ~DogDriver();
 
-    // Re-initialize all hardware: destroys old CAN/motor/IMU and re-creates them.
-    // Blocks for ~1-5s. Returns true if all components online after reconnect.
+    // Re-initialize motors on existing CAN interfaces (does NOT destroy/recreate CAN).
+    // Blocks for ~240ms. Returns true if all components online after reconnect.
     bool ReconnectAll();
 
     DogDriver(const DogDriver&) = delete;

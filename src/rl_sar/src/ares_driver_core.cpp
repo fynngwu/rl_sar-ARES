@@ -285,10 +285,9 @@ private:
     void CheckDriverConnection()
     {
         auto now = std::chrono::steady_clock::now();
-        if (now - last_probe_ < kReconnectInterval) return;
+        if (now - last_reconnect_ < std::chrono::milliseconds(2000)) return;
 
         std::lock_guard<std::mutex> lock(driver_mutex_);
-        last_probe_ = std::chrono::steady_clock::now();
 
         bool healthy = driver_ && driver_->IsHealthy();
         if (healthy) {
@@ -301,6 +300,7 @@ private:
             return;
         }
 
+        last_reconnect_ = now;
         if (!driver_) {
             TryCreateDriver();
         } else {
@@ -499,6 +499,10 @@ private:
                 printf("[GAMEPAD] LT+Y → RL\n");
                 mode_ = DriverMode::RL;
             }
+        } else if (lb_y_edge) {
+            printf("[GAMEPAD] LB+Y → SELECT_LOCOMOTION\n");
+        } else if (lb_start_edge) {
+            printf("[GAMEPAD] LB+Start → TOGGLE_RECORD\n");
         }
     }
 
@@ -527,10 +531,9 @@ private:
     static constexpr float HEIGHT_MAX = 0.05f;
     static constexpr float HEIGHT_STEP = 0.005f;
     float height_value_ = 0.0f;
-    static constexpr auto kReconnectInterval = std::chrono::milliseconds(2000);
-    std::chrono::steady_clock::time_point last_probe_{};
     bool gamepad_connected_logged_ = false;
     bool driver_connected_logged_ = false;
+    std::chrono::steady_clock::time_point last_reconnect_{};
     bool prev_rb_x_ = false, prev_lb_rb_ = false, prev_lb_start_ = false;
     bool prev_lb_a_ = false, prev_lb_y_ = false, prev_lt_y_ = false;
 };
