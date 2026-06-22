@@ -60,8 +60,6 @@ void DogDriver::Init() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 motor_controller_->EnableAutoReport(idx);
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                motor_controller_->EnableAutoReport(idx);
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
                 MIT_params params;
                 params.kp = DEFAULT_KP;
@@ -83,31 +81,56 @@ void DogDriver::Init() {
     imu_ = std::make_unique<IMUComponent>(kIMUDev);
     imu_connected_ = imu_->IsConnected();
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
     while (std::chrono::steady_clock::now() < deadline) {
         int online = OnlineMotorCount();
         if (online >= NUM_JOINTS) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 }
 
 bool DogDriver::ReconnectAll() {
-    motor_controller_.reset();
-    for (int leg = 0; leg < NUM_LEGS; ++leg)
-        can_interfaces_[leg].reset();
-    imu_.reset();
-    imu_connected_ = false;
+    if (!motor_controller_) return false;
+
     motor_initialized_.fill(false);
 
-    try {
-        Init();
-    } catch (const std::exception& e) {
-        std::cerr << "[DogDriver] ReconnectAll: Init failed: " << e.what() << std::endl;
-        return false;
-    } catch (...) {
-        std::cerr << "[DogDriver] ReconnectAll: Init failed: unknown error" << std::endl;
-        return false;
+    for (int leg = 0; leg < NUM_LEGS; ++leg) {
+        bool can_ok = can_interfaces_[leg] && can_interfaces_[leg]->IsOpen();
+        for (int j = 0; j < JOINTS_PER_LEG; ++j) {
+            int global_idx = leg + j * NUM_LEGS;
+            int idx = motor_indices_[global_idx];
+
+            if (!can_ok) continue;
+
+            try {
+                motor_controller_->EnableMotor(idx);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                motor_controller_->EnableAutoReport(idx);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+                MIT_params params;
+                params.kp = DEFAULT_KP;
+                params.kd = DEFAULT_KD;
+                params.vel_limit = MAX_SPEED;
+                params.torque_limit = MAX_TORQUE;
+                motor_controller_->SetMITParams(idx, params);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+                motor_initialized_[global_idx] = true;
+            } catch (const std::exception& e) {
+                std::cout << "[DogDriver] Motor " << global_idx
+                          << " reinit failed: " << e.what() << std::endl;
+            }
+        }
     }
+
+    // IMU 只在断开时重建
+    if (!imu_ || !imu_->IsConnected()) {
+        imu_.reset();
+        imu_ = std::make_unique<IMUComponent>(kIMUDev);
+        imu_connected_ = imu_->IsConnected();
+    }
+
     return IsHealthy();
 }
 

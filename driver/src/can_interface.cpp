@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
@@ -38,12 +39,16 @@ CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1),
         return;
     }
 
-    // Read timeout (matches UIKA: 5ms)
+    // Read timeout
     struct timeval timeout{};
     timeout.tv_sec = 0;
     timeout.tv_usec = 5000;
     setsockopt(can_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    // Writes are blocking (default socket behavior, matches UIKA)
+    // Write timeout — 1ms, drop frame rather than block
+    struct timeval wtimeout{};
+    wtimeout.tv_sec = 0;
+    wtimeout.tv_usec = 1000;
+    setsockopt(can_socket, SOL_SOCKET, SO_SNDTIMEO, &wtimeout, sizeof(wtimeout));
 
     running = true;
     can_thread = std::thread([this]() {
@@ -120,9 +125,15 @@ bool CANInterface::IsOpen() const {
 
 int CANInterface::SendMessage(const struct can_frame* frame) {
     if (can_socket < 0) return -1;
+
+    struct pollfd pfd{};
+    pfd.fd = can_socket;
+    pfd.events = POLLOUT;
+    int pret = poll(&pfd, 1, 1);
+    if (pret <= 0) return -1;
+
     int nbytes = write(can_socket, frame, sizeof(struct can_frame));
     if (nbytes != sizeof(struct can_frame)) {
-        perror("CAN write");
         return -1;
     }
     return 0;

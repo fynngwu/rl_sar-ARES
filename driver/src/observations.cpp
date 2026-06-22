@@ -131,7 +131,7 @@ void IMUComponent::AutoScanSensor() {
 
     s_cDataUpdate = 0;
     WitReadReg(AX, 3);
-    Delayms(200);
+    Delayms(50);
 
     while(serial_read_data(fd, (unsigned char*)cBuff, 1)) {
         WitSerialDataIn(cBuff[0]);
