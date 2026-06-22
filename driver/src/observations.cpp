@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <cmath>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 
 #include "serial.h"
@@ -136,11 +137,7 @@ void IMUComponent::AutoScanSensor() {
         WitSerialDataIn(cBuff[0]);
     }
 
-    if (s_cDataUpdate != 0) {
-        std::cout << "IMU Connected at baud " << s_iCurBaud << std::endl;
-    } else {
-        std::cerr << "IMU not responding at baud " << s_iCurBaud << std::endl;
-    }
+
 }
 
 int IMUComponent::ConfigureSensorOutputs() {
@@ -225,7 +222,6 @@ std::vector<float> JointComponent::GetObs() const {
 Gamepad::Gamepad(const char* dev) : fd(-1), running(true), connected(false) {
     fd = open(dev, O_RDONLY | O_NONBLOCK);
     if (fd < 0) {
-        std::cerr << "Failed to open gamepad device: " << dev << std::endl;
         running = false;
         return;
     }
@@ -270,11 +266,28 @@ std::string Gamepad::GetName() const {
 
 void Gamepad::ReadLoop() {
     struct js_event event;
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+
     while (running) {
-        bool any_read = false;
+        int ret = poll(&pfd, 1, 10);
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            connected = false;
+            running = false;
+            if (fd >= 0) {
+                close(fd);
+                fd = -1;
+            }
+            break;
+        }
+        if (ret == 0) continue;
+
+        bool changed = false;
         ssize_t read_size = 0;
         while ((read_size = read(fd, &event, sizeof(event))) == sizeof(event)) {
-            any_read = true;
+            changed = true;
             if (event.type & JS_EVENT_AXIS) {
                 if (event.number < JS_AXIS_LIMIT) {
                     std::lock_guard<std::mutex> lock(data_mutex);
@@ -296,10 +309,9 @@ void Gamepad::ReadLoop() {
             }
             break;
         }
-        if (!any_read && fd >= 0) {
-            // No data available
+        if (changed && on_update_) {
+            on_update_();
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 }
 

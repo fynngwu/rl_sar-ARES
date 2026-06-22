@@ -31,6 +31,12 @@ public:
         float angular_z = 0.0f;
     };
 
+    struct GamepadState {
+        bool connected = false;
+        bool buttons[64]{};
+        float axes[64]{};
+    };
+
     AresDriverCore(const std::string& policy_dir, const std::string& policy_name);
     ~AresDriverCore();
 
@@ -41,6 +47,7 @@ public:
     JointFeedback GetTopicFeedback() const;
     ImuData GetImuData() const;
     GamepadCommand PollGamepad();
+    GamepadState PollGamepadState();
     bool GetGamepadButton(int button) const;
     float GetGamepadAxis(int axis) const;
 
@@ -57,7 +64,7 @@ public:
     float gamepad_scale() const;
     bool imu_connected() const;
     bool gamepad_connected() const;
-    const std::string& gamepad_name() const;
+    std::string gamepad_name() const;
 
 private:
     class Impl;

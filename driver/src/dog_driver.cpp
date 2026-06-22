@@ -35,7 +35,6 @@ void DogDriver::Init() {
         std::cerr << "[DogDriver] No CAN interfaces available, skipping motor init" << std::endl;
     }
 
-    std::cout << "[DogDriver] Binding motors..." << std::endl;
     for (int leg = 0; leg < NUM_LEGS; ++leg) {
         bool can_ok = can_interfaces_[leg] && can_interfaces_[leg]->IsOpen();
         for (int j = 0; j < JOINTS_PER_LEG; ++j) {
@@ -58,11 +57,11 @@ void DogDriver::Init() {
 
             try {
                 motor_controller_->EnableMotor(idx);
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                motor_controller_->EnableAutoReport(idx);
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 motor_controller_->EnableAutoReport(idx);
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                motor_controller_->EnableAutoReport(idx);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
                 MIT_params params;
                 params.kp = DEFAULT_KP;
@@ -70,11 +69,9 @@ void DogDriver::Init() {
                 params.vel_limit = MAX_SPEED;
                 params.torque_limit = MAX_TORQUE;
                 motor_controller_->SetMITParams(idx, params);
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
                 motor_initialized_[global_idx] = true;
-                std::cout << "[DogDriver] Motor " << global_idx
-                          << " initialized on " << kCanNames[leg] << std::endl;
             } catch (const std::exception& e) {
                 std::cout << "[DogDriver] Motor " << global_idx
                           << " init failed on " << kCanNames[leg]
@@ -86,17 +83,15 @@ void DogDriver::Init() {
     imu_ = std::make_unique<IMUComponent>(kIMUDev);
     imu_connected_ = imu_->IsConnected();
 
-    int online_count = 0;
-    for (int i = 0; i < NUM_JOINTS; ++i) {
-        if (motor_initialized_[i]) ++online_count;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while (std::chrono::steady_clock::now() < deadline) {
+        int online = OnlineMotorCount();
+        if (online >= NUM_JOINTS) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    std::cout << "[DogDriver] Ready: " << online_count << "/" << NUM_JOINTS
-              << " motors initialized" << std::endl;
 }
 
 bool DogDriver::ReconnectAll() {
-    std::cout << "[DogDriver] Reconnecting all hardware (CAN+motors+IMU)..." << std::endl;
-
     motor_controller_.reset();
     for (int leg = 0; leg < NUM_LEGS; ++leg)
         can_interfaces_[leg].reset();
