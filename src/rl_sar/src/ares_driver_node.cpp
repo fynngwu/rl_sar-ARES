@@ -12,6 +12,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <functional>
 #include <iomanip>
 #include <memory>
@@ -67,17 +68,6 @@ public:
     }
 
 private:
-    static const char* DriverModeName(DriverMode mode)
-    {
-        switch (mode) {
-        case DriverMode::DISABLE: return "DISABLE";
-        case DriverMode::STAND: return "STAND";
-        case DriverMode::RL: return "RL";
-        case DriverMode::DAMPING: return "DAMPING";
-        }
-        return "UNKNOWN";
-    }
-
     std::string FmtFloatVec(const std::vector<float>& v)
     {
         std::ostringstream oss;
@@ -117,7 +107,6 @@ private:
     void FeedbackTimerCallback()
     {
         PublishDriverMode();
-        DetectGamepadCommand();
 
         auto joint_states = core_->GetTopicFeedback();
         sensor_msgs::msg::JointState feedback_msg;
@@ -161,43 +150,6 @@ private:
         driver_mode_pub_->publish(msg);
     }
 
-    void DetectGamepadCommand()
-    {
-        if (!core_->gamepad_connected())
-            return;
-
-        const bool a = core_->GetGamepadButton(0);
-        const bool x = core_->GetGamepadButton(2);
-        const bool y = core_->GetGamepadButton(3);
-        const bool lb = core_->GetGamepadButton(4);
-        const bool rb = core_->GetGamepadButton(5);
-        const bool start = core_->GetGamepadButton(7);
-        const bool lt = core_->GetGamepadAxis(2) > 0.5f;
-
-        if (rb && x) {
-            RCLCPP_INFO(get_logger(), "[Gamepad] RB+X → DISABLE");
-            (void)core_->RequestModeChange(DriverMode::DISABLE);
-        } else if (lb && rb) {
-            RCLCPP_INFO(get_logger(), "[Gamepad] LB+RB → DAMPING");
-            (void)core_->RequestModeChange(DriverMode::DAMPING);
-        } else if (lb && start) {
-            RCLCPP_INFO(get_logger(), "[Gamepad] LB+Start → TOGGLE_RECORD");
-        } else if (lb && a) {
-            RCLCPP_INFO(get_logger(), "[Gamepad] LB+A → STAND");
-            (void)core_->RequestModeChange(DriverMode::STAND);
-        } else if (lb && y) {
-            RCLCPP_INFO(get_logger(), "[Gamepad] LB+Y → SELECT_LOCOMOTION");
-        } else if (lt && y) {
-            if (core_->GetMode() == DriverMode::STAND) {
-                RCLCPP_INFO(get_logger(), "[Gamepad] LT+Y → RL");
-                (void)core_->RequestModeChange(DriverMode::RL);
-            } else {
-                RCLCPP_WARN(get_logger(), "[Gamepad] LT+Y → ignored (need STAND, current=%s)",
-                            DriverModeName(core_->GetMode()));
-            }
-        }
-    }
-
     std::unique_ptr<AresDriverCore> core_;
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
@@ -211,6 +163,8 @@ private:
 
 int main(int argc, char **argv)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
     rclcpp::init(argc, argv);
     std::string policy_name = (argc > 1) ? argv[1] : "dream_waq/dream_waq";
     RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node (policy: %s)...", policy_name.c_str());

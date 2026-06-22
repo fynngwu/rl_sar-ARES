@@ -7,6 +7,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <functional>
 #include <string>
 #include <linux/joystick.h>
 #include "robstride.hpp"
@@ -30,6 +31,9 @@ public:
     bool IsConnected() const;
     std::string GetName() const;
 
+    using ButtonCallback = std::function<void()>;
+    void SetOnUpdate(ButtonCallback cb) { on_update_ = std::move(cb); }
+
 private:
     void ReadLoop();
     int fd;
@@ -39,6 +43,7 @@ private:
     mutable std::mutex data_mutex;
     float axes[JS_AXIS_LIMIT];
     bool buttons[JS_BUTTON_LIMIT];
+    ButtonCallback on_update_;
 };
 
 class RoboObsFrame {
