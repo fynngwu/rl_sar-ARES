@@ -25,12 +25,12 @@
 ### Driver Node (ares_driver_node)
 - 状态: DISABLE → STAND → RL (→ DAMPING)
 - 发布 `/driver_mode` (UInt8) 广播当前状态
-- 游戏手柄: 检测组合键 → 发布 `/remote_command` + 自行切换状态
+- 游戏手柄: 检测组合键 → 直接切换状态 + 打印 `[Gamepad]` 日志
 
 ### RL Node (ares)
 - 订阅 `/driver_mode`，收到 RL 时开始推理，其他时跳过
 - 发布 `/motor_command` (仅在 RL 模式下)
-- 无状态机逻辑，不订阅 `/remote_command`
+- 无状态机逻辑
 
 ### Topic 流向
 ```
@@ -39,8 +39,17 @@ Driver ──/motor_feedback──→ RL Node
 Driver ──/imu/data──→ RL Node
 Driver ──/xbox_vel──→ RL Node
 RL Node ──/motor_command──→ Driver (仅 RL 模式)
-Driver ──/remote_command──→ (仅用于 TOGGLE_RECORD 等，未来可移除)
 ```
+
+### 游戏手柄组合键
+| 组合键 | 动作 |
+|--------|------|
+| LB+A | → STAND |
+| LT+Y | → RL (需先在 STAND) |
+| RB+X | → DISABLE |
+| LB+RB | → DAMPING |
+| LB+Start | TOGGLE_RECORD |
+| LB+Y | SELECT_LOCOMOTION |
 
 ## Key Conventions
 
@@ -57,5 +66,28 @@ Driver ──/remote_command──→ (仅用于 TOGGLE_RECORD 等，未来可�
 - Driver node 新增 `/driver_mode` topic，直接控制 RL node 的推理启停
 - 已移除所有 keyboard 依赖（`keyboard_helper.cpp` 从构建中移除），控制完全由 gamepad 经 topic 传递
 - 已清理死代码：UIKA 变体、orphaned FSM、rl_sdk、vector_math、motion_loader、matplotlibcpp、mujoco/robot_sdk
+- 已移除 `/remote_command` topic（driver 发布但无人订阅的遗留产物）
 - Motor params 无默认值：Init 时校验 kp/kd/torque 长度，不匹配直接 FATAL 退出
 - 传感器未就绪时持续打印警告（每 2 秒），明确指示缺少 IMU 或 motor feedback
+
+### 断线重连机制 (2026-06-22)
+
+**健康检查**：`IsHealthy()` 要求 **IMU 连接 + 全部 12 电机在线**，任何一个不满足就触发重建。
+
+**重建流程**：不重建 DogDriver 对象，而是调用 `ReconnectAll()` 在同一实例上销毁旧 CAN/motor/IMU 并重新初始化。
+
+**重连触发**：`MaintainConnections()` 每秒检查一次，打印明确的组件级日志：
+```
+[DRIVER] Health check FAILED: IMU=no, Motors=6/12 online. Reconnecting CAN+motors+IMU...
+[DRIVER] Reconnected successfully (IMU=yes, Motors=12/12)
+[GAMEPAD] Not connected. Retrying at /dev/input/js0...
+```
+
+**CAN 保护**：
+- CAN 不存在时跳过电机初始化（`CANInterface::IsOpen()` 检查），不浪费时间
+- CAN 断电时读线程检测 `ENODEV`/`ENOTCONN` 自动退出，不空转
+- `ReconnectAll()` 和 `LogAndReconnectDriverLocked()` 均有 try-catch 异常保护
+
+**Robstride 错误处理**：
+- `HandleFault` / `HandleErrorFeedback`：任何错误（不仅是 phase-current）→ `Disable → Clear → Enable`
+- Control thread 只更新 online/offline 状态，不做重连
