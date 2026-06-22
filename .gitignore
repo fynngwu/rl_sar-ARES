@@ -8,3 +8,7 @@ policy/dogv2_cts/cts/
 .history/
 diagnostics_logs
 records
+.deps
+.vscode
+CMakeFiles
+.kilo

@@ -6,8 +6,7 @@
 
 #include "rl_core.hpp"
 #include "loop.hpp"
-#include "keyboard_helper.hpp"
-#include "remote_command.hpp"
+#include "driver_mode.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -17,99 +16,96 @@
 #include <cstdio>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
-#include <map>
 
 using Lock = std::lock_guard<std::mutex>;
 
-class ARSNode : public rclcpp::Node
+class AresRLNode : public rclcpp::Node
 {
 public:
-    explicit ARSNode(const std::string& policy_name)
+    explicit AresRLNode(const std::string& policy_name)
         : Node("ares_rl_node")
     {
         using namespace std::placeholders;
+
         motor_command_pub_ = create_publisher<sensor_msgs::msg::JointState>("/motor_command", 10);
         motor_param_pub_   = create_publisher<sensor_msgs::msg::JointState>("/motor_param_update", 1);
-        remote_cmd_sub_ = create_subscription<std_msgs::msg::UInt8>(
-            "/remote_command", 10, std::bind(&ARSNode::RemoteCommandCallback, this, _1));
+
+        driver_mode_sub_ = create_subscription<std_msgs::msg::UInt8>(
+            "/driver_mode", 10, std::bind(&AresRLNode::DriverModeCallback, this, _1));
         motor_feedback_sub_ = create_subscription<sensor_msgs::msg::JointState>(
-            "/motor_feedback", 10, std::bind(&ARSNode::MotorFeedbackCallback, this, _1));
+            "/motor_feedback", 10, std::bind(&AresRLNode::MotorFeedbackCallback, this, _1));
         imu_sub_  = create_subscription<sensor_msgs::msg::Imu>(
-            "/imu/data", 10, std::bind(&ARSNode::ImuCallback, this, _1));
+            "/imu/data", 10, std::bind(&AresRLNode::ImuCallback, this, _1));
         xbox_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-            "/xbox_vel", 10, std::bind(&ARSNode::XboxVelCallback, this, _1));
+            "/xbox_vel", 10, std::bind(&AresRLNode::XboxVelCallback, this, _1));
 
-        {
-            std::string policies_path = std::string(POLICY_DIR) + "/policies.yaml";
-            YAML::Node root = YAML::LoadFile(policies_path);
-            for (const auto& kv : root)
-                policy_map_[kv.first.as<std::string>()[0]] = kv.second.as<std::string>();
-        }
+        selected_policy_ = policy_name.empty() ? "dream_waq/dream_waq" : policy_name;
 
-        selected_policy_ = "dream_waq/dream_waq";
-        if (!policy_name.empty()) {
-            std::string selected = policy_name;
-            bool policy_found = false;
-            for (const auto& [key, name] : policy_map_)
-                if (name == selected) { policy_found = true; break; }
-            if (!policy_found && !policy_map_.empty()) {
-                selected = policy_map_.begin()->second;
-                RCLCPP_WARN(get_logger(), "Policy not found, using first: %s", selected.c_str());
-            }
-            selected_policy_ = selected;
-            if (!InitRL(selected_policy_)) { RCLCPP_ERROR(get_logger(), "RL init failed!"); return; }
+        if (!InitRL(selected_policy_)) {
+            RCLCPP_FATAL(get_logger(), "RL init failed for %s — aborting", selected_policy_.c_str());
+            rclcpp::shutdown();
+            return;
         }
 
         loop_control_ = std::make_shared<LoopFunc>("loop_control", rl_.GetDt(),
-                                                     std::bind(&ARSNode::RobotControl, this));
+                                                     std::bind(&AresRLNode::RobotControl, this));
         loop_rl_ = std::make_shared<LoopFunc>("loop_rl", rl_.GetDt() * rl_.GetDecimation(),
-                                                std::bind(&ARSNode::ModelLoop, this));
-        loop_control_->start();  loop_rl_->start();
+                                                std::bind(&AresRLNode::ModelLoop, this));
+        loop_control_->start();
+        loop_rl_->start();
 
-        std::string help = "\n=== ARES RL Controls ===\n";
-        for (const auto& [key, name] : policy_map_)
-            help += "  [" + std::string(1, key) + "] " + name + "\n";
-        help += "  [0] STOP\n  Switch policy from STOPPED\n\n";
-        printf("%s", help.c_str());
+        RCLCPP_INFO(get_logger(), "RL node ready (%s) — waiting for driver_mode=RL", selected_policy_.c_str());
     }
 
-    ~ARSNode()
+    ~AresRLNode()
     {
         if (loop_control_) loop_control_->shutdown();
         if (loop_rl_) loop_rl_->shutdown();
     }
 
 private:
-    static const char* RemoteCommandName(RemoteCommand cmd)
-    {
-        switch (cmd) {
-        case RemoteCommand::NONE: return "NONE";
-        case RemoteCommand::RECOVER_STAND: return "RECOVER_STAND";
-        case RemoteCommand::SELECT_LOCOMOTION: return "SELECT_LOCOMOTION";
-        case RemoteCommand::START_DREAMWAQ: return "START_DREAMWAQ";
-        case RemoteCommand::DISABLE: return "DISABLE";
-        case RemoteCommand::DAMPING: return "DAMPING";
-        case RemoteCommand::TOGGLE_RECORD: return "TOGGLE_RECORD";
-        }
-        return "UNKNOWN";
-    }
-
     bool InitRL(const std::string& policy_name)
     {
-        if (!rl_.Init(std::string(POLICY_DIR), policy_name)) {
+        if (!rl_.Init(std::string(POLICY_DIR), policy_name))
+            return false;
+
+        const auto& kp = rl_.GetKp();
+        const auto& kd = rl_.GetKd();
+        const auto& tl = rl_.GetTorqueLimits();
+        int ndof = rl_.GetNumDofs();
+        if ((int)kp.size() != ndof || (int)kd.size() != ndof || (int)tl.size() != ndof) {
+            RCLCPP_FATAL(get_logger(),
+                "Motor param size mismatch: ndof=%d kp=%zu kd=%zu torque=%zu",
+                ndof, kp.size(), kd.size(), tl.size());
             return false;
         }
 
         PublishMotorParams();
-        all_sensors_ready_ = false;
         return true;
+    }
+
+    void DriverModeCallback(const std_msgs::msg::UInt8::SharedPtr msg)
+    {
+        uint8_t raw = msg->data;
+        if (raw > static_cast<uint8_t>(DriverMode::DAMPING))
+            return;
+        DriverMode new_mode = static_cast<DriverMode>(raw);
+
+        if (new_mode == DriverMode::RL && driver_mode_ != DriverMode::RL) {
+            RCLCPP_INFO(get_logger(), "Driver → RL: starting inference (%s)", selected_policy_.c_str());
+        } else if (new_mode != DriverMode::RL && driver_mode_ == DriverMode::RL) {
+            RCLCPP_INFO(get_logger(), "Driver left RL mode");
+        }
+
+        driver_mode_ = new_mode;
     }
 
     void ModelLoop()
     {
         if (!rl_.IsInitialized())
+            return;
+        if (driver_mode_ != DriverMode::RL)
             return;
 
         std::array<float, 12> joint_pos, joint_vel, joint_torque;
@@ -137,51 +133,24 @@ private:
 
     void RobotControl()
     {
-        int key = kbhit();
+        if (driver_mode_ != DriverMode::RL)
+            return;
+        if (!rl_.IsInitialized())
+            return;
 
-        // Policy switch: from uninitialized or from STOPPED
-        if (policy_map_.count(static_cast<char>(key)) &&
-            (!rl_.IsInitialized() || rl_.GetState() == AresRL::State::STOPPED)) {
-            auto it = policy_map_.find(static_cast<char>(key));
-            if (it != policy_map_.end()) {
-                printf("[RL] Loading %s ...\n", it->second.c_str());
-                if (InitRL(it->second)) {
-                    all_sensors_ready_ = true;
-                    rl_.SetState(AresRL::State::RUNNING);
-                    printf("[RL] RUNNING (%s)\n", it->second.c_str());
-                } else {
-                    printf("[RL] Init FAILED\n");
-                }
+        if (!all_sensors_ready_) {
+            auto now = this->now();
+            if (!last_sensor_warn_ || (now - *last_sensor_warn_).seconds() >= 2.0) {
+                last_sensor_warn_ = now;
+                if (!imu_received_ && !motor_feedback_received_)
+                    RCLCPP_WARN(get_logger(), "Waiting for sensors: no /imu/data and no /motor_feedback");
+                else if (!imu_received_)
+                    RCLCPP_WARN(get_logger(), "Waiting for sensors: no /imu/data");
+                else
+                    RCLCPP_WARN(get_logger(), "Waiting for sensors: no /motor_feedback");
             }
             return;
         }
-
-        // Not initialized — nothing more to do
-        if (!rl_.IsInitialized()) return;
-
-        if (key == '0' && rl_.GetState() != AresRL::State::STOPPED) {
-            sensor_msgs::msg::JointState cmd;
-            cmd.header.stamp = now();
-            const auto& default_pos = rl_.GetDefaultDofPos();
-            const auto& limits = rl_.GetPositionLimits();
-            for (int i = 0; i < rl_.GetNumDofs(); ++i) {
-                float pos = default_pos[rl_.GetDriverToTopic()[i]];
-                if (!limits.empty() && static_cast<size_t>(i) < limits.size())
-                    pos = std::clamp(pos, limits[i].first, limits[i].second);
-                cmd.position.push_back(pos);
-            }
-            motor_command_pub_->publish(cmd);
-            rl_.SetState(AresRL::State::STOPPED);
-            printf("[RL] STOPPED\n");
-            return;
-        }
-
-        // Recording toggle
-        if ((key == 'L' || key == 'l') && rl_.IsInitialized())
-            rl_.ToggleRecording();
-
-        if (!all_sensors_ready_) return;
-        if (rl_.GetState() == AresRL::State::STOPPED) return;
 
         sensor_msgs::msg::JointState cmd;
         cmd.header.stamp = now();
@@ -199,60 +168,6 @@ private:
         motor_command_pub_->publish(cmd);
     }
 
-    void RemoteCommandCallback(const std_msgs::msg::UInt8::SharedPtr msg)
-    {
-        RemoteCommand cmd = static_cast<RemoteCommand>(msg->data);
-        RCLCPP_INFO(
-            get_logger(),
-            "Received /remote_command: %s (rl_state=%s, locomotion_selected=%s)",
-            RemoteCommandName(cmd),
-            rl_.GetState() == AresRL::State::RUNNING ? "RUNNING" : "STOPPED",
-            locomotion_selected_ ? "true" : "false");
-
-        switch (cmd) {
-        case RemoteCommand::RECOVER_STAND:
-            if (rl_.GetState() != AresRL::State::STOPPED) {
-                rl_.SetState(AresRL::State::STOPPED);
-                RCLCPP_INFO(get_logger(), "Remote: stop policy and recover stand");
-            }
-            locomotion_selected_ = false;
-            break;
-        case RemoteCommand::SELECT_LOCOMOTION:
-            locomotion_selected_ = true;
-            RCLCPP_INFO(get_logger(), "Remote: locomotion family armed");
-            break;
-        case RemoteCommand::START_DREAMWAQ:
-            if (!locomotion_selected_) {
-                RCLCPP_WARN(get_logger(), "Remote: locomotion family not selected");
-                break;
-            }
-            if (!rl_.IsInitialized()) {
-                if (!InitRL(selected_policy_)) {
-                    RCLCPP_ERROR(get_logger(), "Remote: init failed for %s", selected_policy_.c_str());
-                    break;
-                }
-            }
-            if (all_sensors_ready_) {
-                rl_.SetState(AresRL::State::RUNNING);
-                RCLCPP_INFO(get_logger(), "Remote: RUNNING (%s)", selected_policy_.c_str());
-            } else {
-                RCLCPP_WARN(get_logger(), "Remote: sensors not ready, cannot start policy");
-            }
-            break;
-        case RemoteCommand::DISABLE:
-        case RemoteCommand::DAMPING:
-            if (rl_.GetState() != AresRL::State::STOPPED)
-                rl_.SetState(AresRL::State::STOPPED);
-            break;
-        case RemoteCommand::TOGGLE_RECORD:
-            if (rl_.IsInitialized())
-                rl_.ToggleRecording();
-            break;
-        case RemoteCommand::NONE:
-            break;
-        }
-    }
-
     void PublishMotorParams()
     {
         sensor_msgs::msg::JointState msg;
@@ -261,12 +176,9 @@ private:
         const auto& kd = rl_.GetKd();
         const auto& tl = rl_.GetTorqueLimits();
         for (int i = 0; i < rl_.GetNumDofs(); ++i) {
-            msg.position.push_back(
-                i < (int)kp.size() ? kp[i] : 20.0f);
-            msg.velocity.push_back(
-                i < (int)kd.size() ? kd[i] : 1.0f);
-            msg.effort.push_back(
-                i < (int)tl.size() ? tl[i] : 17.0f);
+            msg.position.push_back(kp[i]);
+            msg.velocity.push_back(kd[i]);
+            msg.effort.push_back(tl[i]);
         }
         motor_param_pub_->publish(msg);
     }
@@ -312,7 +224,7 @@ private:
     AresRL rl_;
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_command_pub_, motor_param_pub_;
-    rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr remote_cmd_sub_;
+    rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr driver_mode_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_sub_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_sub_;
@@ -326,16 +238,16 @@ private:
     bool imu_received_{false}, motor_feedback_received_{false};
     bool all_sensors_ready_{false};
 
-    std::map<char, std::string> policy_map_;
+    DriverMode driver_mode_{DriverMode::DISABLE};
+    std::optional<rclcpp::Time> last_sensor_warn_;
+
     std::string selected_policy_{"dream_waq/dream_waq"};
-    bool locomotion_selected_{false};
 };
 
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
-    // Empty policy name → start in STOP state, load on key press
-    auto node = std::make_shared<ARSNode>(
+    auto node = std::make_shared<AresRLNode>(
         argc > 1 ? argv[1] : "dream_waq/dream_waq");
     rclcpp::executors::MultiThreadedExecutor exec;
     exec.add_node(node);

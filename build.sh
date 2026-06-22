@@ -29,15 +29,15 @@ if [ "$ACTION" = "full" ]; then
 
     echo ""
     echo "[1/2] Building driver..."
-    cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
-    cmake --build driver/build --target dog_driver collect_pace_data -j$(nproc) 2>&1 | tail -3
+    cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release
+    cmake --build driver/build --target dog_driver collect_pace_data -j$(nproc)
     cp -u driver/build/libdog_driver.so driver/libdog_driver.so 2>/dev/null || true
 
     echo ""
     echo "[2/2] Building ROS2 nodes..."
     source_ros2
-    cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
-    cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc) 2>&1 | tail -3
+    cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release
+    cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc)
 
     install_bins
     echo "=== Done ==="
@@ -46,16 +46,16 @@ elif [ "$ACTION" = "make" ]; then
     echo "=== ARES Incremental Build ==="
 
     if [ ! -f driver/build/Makefile ]; then
-        cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+        cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release
     fi
-    cmake --build driver/build --target dog_driver collect_pace_data -j$(nproc) 2>&1 | tail -3
+    cmake --build driver/build --target dog_driver collect_pace_data -j$(nproc)
     cp -u driver/build/libdog_driver.so driver/libdog_driver.so 2>/dev/null || true
 
     source_ros2
     if [ ! -f src/rl_sar/build/Makefile ]; then
-        cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+        cmake -S src/rl_sar -B src/rl_sar/build -DCMAKE_BUILD_TYPE=Release
     fi
-    cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc) 2>&1 | tail -3
+    cmake --build src/rl_sar/build --target ares ares_driver_node -j$(nproc)
 
     install_bins
     echo "=== Done ==="

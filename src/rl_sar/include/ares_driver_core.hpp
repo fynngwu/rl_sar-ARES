@@ -1,17 +1,12 @@
 #pragma once
 
+#include "driver_mode.hpp"
+
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
-
-enum class DriverMode : uint8_t {
-    DISABLE,
-    STAND,
-    RL,
-    DAMPING
-};
 
 class AresDriverCore {
 public:

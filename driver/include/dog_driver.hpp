@@ -91,6 +91,10 @@ public:
     DogDriver();
     ~DogDriver();
 
+    // Re-initialize all hardware: destroys old CAN/motor/IMU and re-creates them.
+    // Blocks for ~1-5s. Returns true if all components online after reconnect.
+    bool ReconnectAll();
+
     DogDriver(const DogDriver&) = delete;
     DogDriver& operator=(const DogDriver&) = delete;
 
@@ -155,7 +159,14 @@ public:
     // Returns true if IMU was successfully opened at construction time.
     bool IsIMUConnected() const;
 
+    // Returns true ONLY if ALL components are online: IMU connected AND all 12 motors online.
+    bool IsHealthy() const;
+
+    // Returns number of motors currently online.
+    int OnlineMotorCount() const;
+
 private:
+    void Init();
     std::array<std::shared_ptr<CANInterface>, NUM_LEGS> can_interfaces_;
     std::shared_ptr<RobstrideController> motor_controller_;
     std::unique_ptr<IMUComponent> imu_;
