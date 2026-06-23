@@ -93,8 +93,10 @@ private:
         DriverMode new_mode = static_cast<DriverMode>(raw);
 
         if (new_mode == DriverMode::RL && driver_mode_ != DriverMode::RL) {
+            rl_.SetState(AresRL::State::RUNNING);
             RCLCPP_INFO(get_logger(), "Driver → RL: starting inference (%s)", selected_policy_.c_str());
         } else if (new_mode != DriverMode::RL && driver_mode_ == DriverMode::RL) {
+            rl_.SetState(AresRL::State::STOPPED);
             RCLCPP_INFO(get_logger(), "Driver left RL mode");
         }
 
