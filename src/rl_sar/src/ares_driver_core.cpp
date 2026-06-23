@@ -284,6 +284,8 @@ private:
 
     void CheckDriverConnection()
     {
+        if (mode_.load() == DriverMode::RL) return;
+
         auto now = std::chrono::steady_clock::now();
         if (now - last_reconnect_ < std::chrono::milliseconds(2000)) return;
 
