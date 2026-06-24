@@ -81,11 +81,14 @@ private:
         int host_id;
         bool enabled;
         bool online;
-        std::chrono::steady_clock::time_point last_online_time;
 
         struct MIT_params mit_params;
         struct motor_state state;
-        int offline_count;
+
+        float target_pos = 0.0f;
+        float target_radps = 0.0f;
+        float target_torque = 0.0f;
+        int missed_times = 0;
         uint8_t error_code = 0;
         uint8_t pattern = 0;
     };

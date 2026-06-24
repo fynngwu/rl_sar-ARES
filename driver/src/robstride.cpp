@@ -136,8 +136,7 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
         for (size_t i = 0; i < motor_data.size(); ++i) {
             auto& motor = motor_data[i];
             if (motor.motor_id == motor_id) {
-                motor.online = true;
-                motor.last_online_time = std::chrono::steady_clock::now();
+                motor.missed_times = 0;
                 motor.error_code = reserved & 0x3F;
                 motor.pattern = (reserved >> 6) & 0x03;
                 bool phase_current_fault = HandleFault(motor.motor_id, motor.error_code);
@@ -164,6 +163,11 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
                     motor.state.position = uint16_to_float(raw_pos, -p_max, p_max, 16);
                     motor.state.velocity = uint16_to_float(raw_vel, -v_max, v_max, 16);
                     motor.state.torque = uint16_to_float(raw_tor, -t_max, t_max, 16);
+
+                    if (!motor.online) {
+                        motor.target_pos = motor.state.position;
+                        motor.online = true;
+                    }
                 }
                 break;
             }
@@ -173,8 +177,7 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
         for (size_t i = 0; i < motor_data.size(); ++i) {
             auto& motor = motor_data[i];
             if (motor.motor_id == motor_id) {
-                motor.online = true;
-                motor.last_online_time = std::chrono::steady_clock::now();
+                motor.missed_times = 0;
                 bool phase_current_fault = HandleErrorFeedback(motor.motor_id, frame);
                 if (phase_current_fault) {
                     std::cout << "[Robstride] Motor " << motor.motor_id
@@ -192,29 +195,63 @@ RobstrideController::RobstrideController() : running(false) {
     can_rx_callback = robstride_can_rx_callback_wrapper;
     running = true;
     control_thread = std::thread([this]() {
-        while(running) {
-            auto now = std::chrono::steady_clock::now();
+        auto next = std::chrono::steady_clock::now();
+        while (running) {
             {
                 std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
-                for (size_t i = 0; i < motor_data.size(); ++i) {
-                    auto& motor = motor_data[i];
-                    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - motor.last_online_time).count();
-                    bool was_online = motor.online;
-                    if (duration > 100) {
-                        motor.online = false;
-                        if (was_online) {
+                for (auto& motor : motor_data) {
+                    if (!motor.enabled) continue;
+
+                    if (motor.missed_times > 100) {
+                        motor.missed_times = 0;
+                        if (motor.online) {
+                            motor.online = false;
                             std::cout << "[Robstride] Motor " << motor.motor_id << " offline" << std::endl;
                         }
-                        EnableMotor(i);
-                    } else {
-                        if (!was_online) {
-                            std::cout << "[Robstride] Motor " << motor.motor_id << " online (recovered)" << std::endl;
-                        }
-                        motor.online = true;
                     }
+
+                    struct can_frame frame;
+                    std::memset(&frame, 0, sizeof(frame));
+
+                    float t_max = motor.motor_info.max_torque > 0 ? motor.motor_info.max_torque : T_MAX;
+                    uint16_t tor_uint = float_to_uint(motor.target_torque, -t_max, t_max, 16);
+
+                    uint32_t id = 0;
+                    id |= (motor.motor_id & 0xFF);
+                    id |= ((tor_uint & 0xFF) << 8);
+                    id |= (((tor_uint >> 8) & 0xFF) << 16);
+                    id |= (COMM_MIT << 24);
+
+                    frame.can_id = id | CAN_EFF_FLAG;
+                    frame.can_dlc = 8;
+
+                    float p_max = P_MAX;
+                    float v_max = motor.motor_info.max_speed > 0 ? motor.motor_info.max_speed : V_MAX;
+
+                    uint16_t pos_uint = float_to_uint(motor.target_pos, -p_max, p_max, 16);
+                    uint16_t vel_uint = float_to_uint(motor.target_radps, -v_max, v_max, 16);
+                    uint16_t kp_uint  = float_to_uint(motor.mit_params.kp, KP_MIN, KP_MAX, 16);
+                    uint16_t kd_uint  = float_to_uint(motor.mit_params.kd, KD_MIN, KD_MAX, 16);
+
+                    frame.data[0] = (pos_uint >> 8) & 0xFF;
+                    frame.data[1] = pos_uint & 0xFF;
+                    frame.data[2] = (vel_uint >> 8) & 0xFF;
+                    frame.data[3] = vel_uint & 0xFF;
+                    frame.data[4] = (kp_uint >> 8) & 0xFF;
+                    frame.data[5] = kp_uint & 0xFF;
+                    frame.data[6] = (kd_uint >> 8) & 0xFF;
+                    frame.data[7] = kd_uint & 0xFF;
+
+                    if (motor.can_iface) {
+                        motor.can_iface->SendMessage(&frame);
+                    }
+                    motor.missed_times++;
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            next += std::chrono::milliseconds(5);
+            std::this_thread::sleep_until(next);
+            if (std::chrono::steady_clock::now() > next + std::chrono::milliseconds(5))
+                next = std::chrono::steady_clock::now();
         }
     });
 }
@@ -252,14 +289,8 @@ int RobstrideController::BindMotor(const char* can_if, std::unique_ptr<struct Mo
     data.host_id = motor_info->host_id;
     data.enabled = false;
     data.online = false;
-    data.last_online_time = std::chrono::steady_clock::now(); // Initialize to now so it doesn't timeout immediately if we want grace period, or 0 if we want immediate timeout.
-    // Requirement says "500ms not received considered offline". 
-    // Initial state is offline until first message? Or online?
-    // Usually online=false initially.
-    
-    // Initialize default state/params
     data.state = {0.0f, 0.0f, 0.0f};
-    data.mit_params = {30.0f, 1.0f, 0.0f, 0.0f};
+    data.mit_params = {0.0f, 0.0f, 0.0f, 0.0f};
     
     // Register filter
     CANInterface::can_filter filter;
@@ -317,43 +348,7 @@ struct MIT_params RobstrideController::GetMITParams(int motor_idx) {
 int RobstrideController::SendMITCommand(int motor_idx, float pos) {
     std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
-        auto& motor = motor_data[motor_idx];
-
-        struct can_frame frame;
-        std::memset(&frame, 0, sizeof(frame));
-
-        float t_max = motor.motor_info.max_torque > 0 ? motor.motor_info.max_torque : T_MAX;
-        uint16_t tor_uint = float_to_uint(0.0f, -t_max, t_max, 16);
-
-        uint32_t id = 0;
-        id |= (motor.motor_id & 0xFF);
-        id |= ((tor_uint & 0xFF) << 8);
-        id |= (((tor_uint >> 8) & 0xFF) << 16);
-        id |= (COMM_MIT << 24);
-
-        frame.can_id = id | CAN_EFF_FLAG;
-        frame.can_dlc = 8;
-
-        float p_max = P_MAX;
-        float v_max = motor.motor_info.max_speed > 0 ? motor.motor_info.max_speed : V_MAX;
-
-        uint16_t pos_uint = float_to_uint(pos, -p_max, p_max, 16);
-        uint16_t vel_uint = float_to_uint(0.0f, -v_max, v_max, 16);
-        uint16_t kp_uint  = float_to_uint(motor.mit_params.kp, KP_MIN, KP_MAX, 16);
-        uint16_t kd_uint  = float_to_uint(motor.mit_params.kd, KD_MIN, KD_MAX, 16);
-
-        frame.data[0] = (pos_uint >> 8) & 0xFF;
-        frame.data[1] = pos_uint & 0xFF;
-        frame.data[2] = (vel_uint >> 8) & 0xFF;
-        frame.data[3] = vel_uint & 0xFF;
-        frame.data[4] = (kp_uint >> 8) & 0xFF;
-        frame.data[5] = kp_uint & 0xFF;
-        frame.data[6] = (kd_uint >> 8) & 0xFF;
-        frame.data[7] = kd_uint & 0xFF;
-
-        if (motor.can_iface) {
-            motor.can_iface->SendMessage(&frame);
-        }
+        motor_data[motor_idx].target_pos = pos;
         return 0;
     }
     return -1;
@@ -364,18 +359,26 @@ int RobstrideController::EnableMotor(int motor_idx) {
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
         auto& motor = motor_data[motor_idx];
         motor.enabled = true;
-        
+
         struct can_frame frame;
         std::memset(&frame, 0, sizeof(frame));
-        
-        uint32_t id = 0;
-        id |= (motor.motor_id & 0xFF);
+
+        uint32_t id = (motor.motor_id & 0xFF);
         id |= ((motor.host_id & 0xFF) << 8);
-        id |= (COMM_ENABLE << 24);
-        
+        id |= (COMM_STOP << 24);
         frame.can_id = id | CAN_EFF_FLAG;
         frame.can_dlc = 8;
-        
+        frame.data[0] = 0x01;
+        if (motor.can_iface) {
+            motor.can_iface->SendMessage(&frame);
+        }
+
+        std::memset(&frame, 0, sizeof(frame));
+        id = (motor.motor_id & 0xFF);
+        id |= ((motor.host_id & 0xFF) << 8);
+        id |= (COMM_ENABLE << 24);
+        frame.can_id = id | CAN_EFF_FLAG;
+        frame.can_dlc = 8;
         if (motor.can_iface) {
             motor.can_iface->SendMessage(&frame);
         }
@@ -444,36 +447,8 @@ int RobstrideController::ClearMotor(int motor_idx) {
 }
 
 int RobstrideController::EnableAutoReport(int motor_idx) {
-    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
-    if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
-        auto& motor = motor_data[motor_idx];
-        
-        struct can_frame frame;
-        std::memset(&frame, 0, sizeof(frame));
-        
-        uint32_t id = 0;
-        id |= (motor.motor_id & 0xFF);
-        id |= ((motor.host_id & 0xFF) << 8);
-        id |= (COMM_REPORT << 24);
-        
-        frame.can_id = id | CAN_EFF_FLAG;
-        frame.can_dlc = 8;
-
-        frame.data[0] = 0x01;
-		frame.data[1] = 0x02;
-		frame.data[2] = 0x03;
-		frame.data[3] = 0x04;
-		frame.data[4] = 0x05;
-		frame.data[5] = 0x06;
-		frame.data[6] = 0x01;
-		frame.data[7] = 0x00;
-        
-        if (motor.can_iface) {
-            motor.can_iface->SendMessage(&frame);
-        }
-        return 0;
-    }
-    return -1;
+    (void)motor_idx;
+    return 0;
 }
 
 int RobstrideController::DisableAutoReport(int motor_idx) {
