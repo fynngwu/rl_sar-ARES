@@ -58,9 +58,7 @@ void DogDriver::Init() {
 }
 
 
-void DogDriver::SetAutoRecovery(bool enabled) {
-    motor_controller_->SetAutoRecovery(enabled);
-}
+
 
 bool DogDriver::ReconnectIMU() {
     if (!imu_ || !imu_->IsConnected()) {

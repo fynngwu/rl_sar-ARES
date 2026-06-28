@@ -236,6 +236,16 @@ private:
             driver_->SetMITParams(i, 0.0f, 4.0f);
     }
 
+    void TryCreateDriver()
+    {
+        try {
+            driver_ = std::make_unique<DogDriver>();
+            printf("[DRIVER] DogDriver initialized\n");
+        } catch (const std::exception& e) {
+            printf("[DRIVER] Init failed: %s\n", e.what());
+            driver_.reset();
+        }
+    }
 
     void CheckDriverConnection()
     {
