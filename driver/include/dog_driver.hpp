@@ -91,13 +91,12 @@ public:
     DogDriver();
     ~DogDriver();
 
-    // Re-initialize motors on existing CAN interfaces (does NOT destroy/recreate CAN).
-    // Blocks for ~240ms. Returns true if all components online after reconnect.
-    bool ReconnectAll();
-
     // Enable/disable automatic fault recovery in CAN RX thread.
     // When false, motors that fault will NOT be auto-re-enabled by the driver.
     void SetAutoRecovery(bool enabled);
+
+    // Reconnect IMU if disconnected. Returns true if IMU is connected after call.
+    bool ReconnectIMU();
 
     DogDriver(const DogDriver&) = delete;
     DogDriver& operator=(const DogDriver&) = delete;
@@ -176,7 +175,6 @@ private:
     std::unique_ptr<IMUComponent> imu_;
 
     std::array<int, NUM_JOINTS> motor_indices_;
-    std::array<bool, NUM_JOINTS> motor_initialized_;
     bool imu_connected_ = false;
 
     static constexpr std::array<int, NUM_JOINTS> kMotorIds = {
