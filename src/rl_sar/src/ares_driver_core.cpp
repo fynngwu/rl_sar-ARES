@@ -236,21 +236,6 @@ private:
             driver_->SetMITParams(i, 0.0f, 4.0f);
     }
 
-    void ApplyPostReconnectMode()
-    {
-        DriverMode mode = mode_.load();
-        switch (mode) {
-        case DriverMode::DAMPING:
-            SetDampingGains();
-            driver_->EnableAll();
-            break;
-        case DriverMode::DISABLE:
-            driver_->DisableAll();
-            break;
-        default:
-            break;
-        }
-    }
 
     void CheckDriverConnection()
     {
@@ -261,53 +246,23 @@ private:
         if (now - last_reconnect_ < std::chrono::milliseconds(2000)) return;
         last_reconnect_ = now;
 
-        std::lock_guard<std::mutex> lock(driver_mutex_);
-
-        bool healthy = driver_ && driver_->IsHealthy();
+        bool imu = imu_connected();
         const char* gp = GamepadStatusStr();
         int motors = driver_ ? driver_->OnlineMotorCount() : 0;
-        bool imu = driver_ && driver_->IsIMUConnected();
 
-        printf("[STATUS] IMU=%s, Motors=%d/%d, Gamepad=%s, Healthy=%s\n",
-               imu ? "yes" : "no", motors, NUM_JOINTS, gp,
-               healthy ? "yes" : "no");
+        printf("[STATUS] IMU=%s, Motors=%d/%d, Gamepad=%s\n",
+               imu ? "yes" : "no", motors, NUM_JOINTS, gp);
 
-        if (healthy) {
-            return;
+        if (!imu) {
+            std::lock_guard<std::mutex> lock(driver_mutex_);
+            if (driver_) {
+                printf("[DRIVER] IMU offline, reconnecting...\n");
+                driver_->ReconnectIMU();
+            }
         }
 
-        if (!driver_) {
-            TryCreateDriver();
-        } else {
-            TryReconnectDriver();
-        }
-    }
-
-    void TryCreateDriver()
-    {
-        printf("[DRIVER] Creating new instance...\n");
-        try {
-            driver_ = std::make_unique<DogDriver>();
-            printf("[DRIVER] Created successfully\n");
-         } catch (const std::exception& e) {
-            printf("[DRIVER] Create failed: %s\n", e.what());
-            driver_.reset();
-        } catch (...) {
-            printf("[DRIVER] Create failed: unknown\n");
-            driver_.reset();
-        }
-    }
-
-    void TryReconnectDriver()
-    {
-        const char* gp = GamepadStatusStr();
-        bool ok = false;
-        try {
-            ok = driver_->ReconnectAll();
-        } catch (const std::exception& e) {
-            printf("[RECONNECT] Exception: %s\n", e.what());
-        } catch (...) {
-            printf("[RECONNECT] Exception: unknown\n");
+        if (!(gamepad_ && gamepad_->IsConnected())) {
+            CheckGamepadConnection();
         }
     }
 
@@ -354,6 +309,8 @@ private:
         }
         switch (next) {
         case DriverMode::DISABLE:
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, 0.0f, 0.0f);
             driver_->DisableAll();
             printf("[MODE] → DISABLED\n");
             break;
@@ -371,11 +328,12 @@ private:
             break;
         }
         case DriverMode::RL:
-            driver_->SetAutoRecovery(true);
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            driver_->EnableAll();
             printf("[MODE] → RL\n");
             break;
         case DriverMode::DAMPING:
-            driver_->SetAutoRecovery(false);
             SetDampingGains();
             driver_->EnableAll();
             printf("[MODE] → DAMPING\n");

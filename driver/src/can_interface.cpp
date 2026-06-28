@@ -2,14 +2,12 @@
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
-#include <poll.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <linux/can.h>
 #include <linux/can/raw.h>
 #include <mutex>
-#include <iostream>
 
 CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1), if_name(can_if) {
     struct sockaddr_can addr;
@@ -39,16 +37,12 @@ CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1),
         return;
     }
 
-    // Read timeout
+    // Read timeout (matches UIKA: 5ms)
     struct timeval timeout{};
     timeout.tv_sec = 0;
     timeout.tv_usec = 5000;
     setsockopt(can_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    // Write timeout — 1ms, drop frame rather than block
-    struct timeval wtimeout{};
-    wtimeout.tv_sec = 0;
-    wtimeout.tv_usec = 1000;
-    setsockopt(can_socket, SOL_SOCKET, SO_SNDTIMEO, &wtimeout, sizeof(wtimeout));
+    // Writes are blocking (default socket behavior, matches UIKA)
 
     running = true;
     can_thread = std::thread([this]() {
@@ -57,12 +51,7 @@ CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1),
             int nbytes = read(can_socket, &frame, sizeof(struct can_frame));
 
             if (nbytes < 0) {
-                if (errno == EBADF || errno == ENODEV || errno == ENOTCONN) {
-                    std::cerr << "[CANInterface] " << if_name
-                              << " read error (errno=" << errno
-                              << "), exiting RX thread" << std::endl;
-                    break;
-                }
+                if (errno == EBADF) break;
                 continue;
             }
 
@@ -119,21 +108,11 @@ const char* CANInterface::GetName() const {
     return if_name.c_str();
 }
 
-bool CANInterface::IsOpen() const {
-    return can_socket >= 0;
-}
-
 int CANInterface::SendMessage(const struct can_frame* frame) {
     if (can_socket < 0) return -1;
-
-    struct pollfd pfd{};
-    pfd.fd = can_socket;
-    pfd.events = POLLOUT;
-    int pret = poll(&pfd, 1, 1);
-    if (pret <= 0) return -1;
-
     int nbytes = write(can_socket, frame, sizeof(struct can_frame));
     if (nbytes != sizeof(struct can_frame)) {
+        perror("CAN write");
         return -1;
     }
     return 0;

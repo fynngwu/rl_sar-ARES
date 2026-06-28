@@ -31,7 +31,6 @@ public:
     CANInterface(const char* can_if);
     ~CANInterface();
     const char* GetName() const;
-    bool IsOpen() const;
     int SendMessage(const struct can_frame* frame);
     int SetFilter(struct can_filter filter, can_rx_callback_t callback, void *user_data);
 private:
