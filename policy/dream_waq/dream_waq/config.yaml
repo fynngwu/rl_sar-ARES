@@ -24,8 +24,8 @@ dream_waq/dream_waq:
   gravity_vec_scale: 1.0
 
   # PD gains (driver reads these at init)
-  fixed_kp: 24
-  fixed_kd: 0.7
+  fixed_kp: 20
+  fixed_kd: 0.5
   torque_limits: [17.0, 17.0, 17.0, 17.0,
                   17.0, 17.0, 17.0, 17.0,
                   25.0, 25.0, 25.0, 25.0]

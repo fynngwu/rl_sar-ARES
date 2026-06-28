@@ -94,30 +94,6 @@ public:
         return cmd;
     }
 
-    GamepadState PollGamepadState()
-    {
-        GamepadState state;
-        std::lock_guard<std::mutex> lock(gamepad_mutex_);
-        if (!gamepad_ || !gamepad_->IsConnected()) return state;
-        state.connected = true;
-        for (int i = 0; i < 64; ++i) state.buttons[i] = gamepad_->GetButton(i);
-        for (int i = 0; i < 64; ++i) state.axes[i] = gamepad_->GetAxis(i);
-        return state;
-    }
-
-    bool GetGamepadButton(int button) const
-    {
-        std::lock_guard<std::mutex> lock(gamepad_mutex_);
-        return gamepad_ && gamepad_->IsConnected() && gamepad_->GetButton(button);
-    }
-
-    float GetGamepadAxis(int axis) const
-    {
-        std::lock_guard<std::mutex> lock(gamepad_mutex_);
-        if (!gamepad_ || !gamepad_->IsConnected()) return 0.0f;
-        return gamepad_->GetAxis(axis);
-    }
-
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                          const std::vector<float>& torque)
     {
@@ -145,19 +121,6 @@ public:
         printf("\n=== ARES Driver Mode Help ===\n");
         printf("Current mode: %s\n", mode_name(mode_.load()));
         printf("=============================\n\n");
-    }
-
-    bool RequestModeChange(DriverMode target)
-    {
-        DriverMode cur = mode_.load();
-        if (target == cur) return true;
-        if (!transition_allowed(cur, target)) {
-            printf("[MODE] Cannot transition from %s to %s\n", mode_name(cur), mode_name(target));
-            return false;
-        }
-        printf("[MODE] %s → %s\n", mode_name(cur), mode_name(target));
-        mode_ = target;
-        return true;
     }
 
     float gamepad_scale_val() const { return gamepad_scale_; }
@@ -256,21 +219,6 @@ public:
     }
 
 private:
-    static bool transition_allowed(DriverMode from, DriverMode to)
-    {
-        if (from == DriverMode::DISABLE && to == DriverMode::STAND) return true;
-        if (from == DriverMode::DISABLE && to == DriverMode::DAMPING) return true;
-        if (from == DriverMode::STAND   && to == DriverMode::RL)     return true;
-        if (from == DriverMode::STAND   && to == DriverMode::DISABLE) return true;
-        if (from == DriverMode::STAND   && to == DriverMode::DAMPING) return true;
-        if (from == DriverMode::RL      && to == DriverMode::STAND)  return true;
-        if (from == DriverMode::RL      && to == DriverMode::DISABLE) return true;
-        if (from == DriverMode::RL      && to == DriverMode::DAMPING) return true;
-        if (from == DriverMode::DAMPING && to == DriverMode::STAND) return true;
-        if (from == DriverMode::DAMPING && to == DriverMode::DISABLE) return true;
-        return false;
-    }
-
     static const char* mode_name(DriverMode m)
     {
         switch (m) {
@@ -282,27 +230,52 @@ private:
         return "???";
     }
 
+    void SetDampingGains()
+    {
+        for (int i = 0; i < NUM_JOINTS; ++i)
+            driver_->SetMITParams(i, 0.0f, 4.0f);
+    }
+
+    void ApplyPostReconnectMode()
+    {
+        DriverMode mode = mode_.load();
+        switch (mode) {
+        case DriverMode::DAMPING:
+            SetDampingGains();
+            driver_->EnableAll();
+            break;
+        case DriverMode::DISABLE:
+            driver_->DisableAll();
+            break;
+        default:
+            break;
+        }
+    }
+
     void CheckDriverConnection()
     {
-        if (mode_.load() == DriverMode::RL) return;
+        DriverMode mode = mode_.load();
+        if (mode != DriverMode::DISABLE && mode != DriverMode::DAMPING) return;
 
         auto now = std::chrono::steady_clock::now();
         if (now - last_reconnect_ < std::chrono::milliseconds(2000)) return;
+        last_reconnect_ = now;
 
         std::lock_guard<std::mutex> lock(driver_mutex_);
 
         bool healthy = driver_ && driver_->IsHealthy();
+        const char* gp = GamepadStatusStr();
+        int motors = driver_ ? driver_->OnlineMotorCount() : 0;
+        bool imu = driver_ && driver_->IsIMUConnected();
+
+        printf("[STATUS] IMU=%s, Motors=%d/%d, Gamepad=%s, Healthy=%s\n",
+               imu ? "yes" : "no", motors, NUM_JOINTS, gp,
+               healthy ? "yes" : "no");
+
         if (healthy) {
-            if (!driver_connected_logged_) {
-                printf("[DRIVER] Connected (IMU=%s, Motors=%d/%d)\n",
-                       driver_->IsIMUConnected() ? "yes" : "no",
-                       driver_->OnlineMotorCount(), NUM_JOINTS);
-                driver_connected_logged_ = true;
-            }
             return;
         }
 
-        last_reconnect_ = now;
         if (!driver_) {
             TryCreateDriver();
         } else {
@@ -315,13 +288,8 @@ private:
         printf("[DRIVER] Creating new instance...\n");
         try {
             driver_ = std::make_unique<DogDriver>();
-            ApplyMotorParams();
-            ApplyCurrentMode();
-            driver_connected_logged_ = true;
-            printf("[DRIVER] Connected (IMU=%s, Motors=%d/%d)\n",
-                   driver_->IsIMUConnected() ? "yes" : "no",
-                   driver_->OnlineMotorCount(), NUM_JOINTS);
-        } catch (const std::exception& e) {
+            printf("[DRIVER] Created successfully\n");
+         } catch (const std::exception& e) {
             printf("[DRIVER] Create failed: %s\n", e.what());
             driver_.reset();
         } catch (...) {
@@ -340,20 +308,6 @@ private:
             printf("[RECONNECT] Exception: %s\n", e.what());
         } catch (...) {
             printf("[RECONNECT] Exception: unknown\n");
-        }
-
-        if (ok) {
-            ApplyMotorParams();
-            ApplyCurrentMode();
-            driver_connected_logged_ = true;
-            printf("[RECONNECT] OK (IMU=%s, Motors=%d/%d, Mode=%s, Gamepad=%s)\n",
-                   driver_->IsIMUConnected() ? "yes" : "no",
-                   driver_->OnlineMotorCount(), NUM_JOINTS,
-                   mode_name(mode_.load()), gp);
-        } else {
-            printf("[RECONNECT] Failed (IMU=%s, Motors=%d/%d, Gamepad=%s)\n",
-                   driver_->IsIMUConnected() ? "yes" : "no",
-                   driver_->OnlineMotorCount(), NUM_JOINTS, gp);
         }
     }
 
@@ -403,52 +357,28 @@ private:
             driver_->DisableAll();
             printf("[MODE] → DISABLED\n");
             break;
-        case DriverMode::STAND:
+        case DriverMode::STAND: {
+            SetDampingGains();
+            driver_->EnableAll();
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
+            auto s = driver_->GetJointStates();
+            stand_start_pos_ = s.position;
+            driver_->SetAllJointPositions(stand_start_pos_);
             for (int i = 0; i < NUM_JOINTS; ++i)
                 driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
-            driver_->EnableAll();
-            { auto s = driver_->GetJointStates(); stand_start_pos_ = s.position; }
             stand_step_ = 0;
             printf("[MODE] → STAND\n");
             break;
+        }
         case DriverMode::RL:
+            driver_->SetAutoRecovery(true);
             printf("[MODE] → RL\n");
             break;
         case DriverMode::DAMPING:
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, 0.0f, 4.0f);
+            driver_->SetAutoRecovery(false);
+            SetDampingGains();
             driver_->EnableAll();
-            driver_->SetAllJointPositions(std::array<float, NUM_JOINTS>{});
             printf("[MODE] → DAMPING\n");
-            break;
-        }
-    }
-
-    void ApplyMotorParams()
-    {
-        if (!driver_) return;
-        for (int i = 0; i < NUM_JOINTS; ++i) {
-            driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
-            driver_->SetTorqueLimit(i, config_torque_[i]);
-        }
-    }
-
-    void ApplyCurrentMode()
-    {
-        if (!driver_) return;
-        switch (mode_.load()) {
-        case DriverMode::DISABLE: driver_->DisableAll(); break;
-        case DriverMode::STAND:
-            driver_->EnableAll();
-            { auto s = driver_->GetJointStates(); stand_start_pos_ = s.position; }
-            stand_step_ = 0;
-            break;
-        case DriverMode::RL: driver_->EnableAll(); break;
-        case DriverMode::DAMPING:
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, 0.0f, 4.0f);
-            driver_->EnableAll();
-            driver_->SetAllJointPositions(std::array<float, NUM_JOINTS>{});
             break;
         }
     }
@@ -567,21 +497,6 @@ AresDriverCore::GamepadCommand AresDriverCore::PollGamepad()
     return impl_->PollGamepad();
 }
 
-AresDriverCore::GamepadState AresDriverCore::PollGamepadState()
-{
-    return impl_->PollGamepadState();
-}
-
-bool AresDriverCore::GetGamepadButton(int button) const
-{
-    return impl_->GetGamepadButton(button);
-}
-
-float AresDriverCore::GetGamepadAxis(int axis) const
-{
-    return impl_->GetGamepadAxis(axis);
-}
-
 void AresDriverCore::SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                                      const std::vector<float>& torque)
 {
@@ -596,11 +511,6 @@ DriverMode AresDriverCore::GetMode() const
 void AresDriverCore::PrintModeHelp() const
 {
     impl_->PrintModeHelp();
-}
-
-bool AresDriverCore::RequestModeChange(DriverMode target)
-{
-    return impl_->RequestModeChange(target);
 }
 
 const std::vector<float>& AresDriverCore::config_kp() const

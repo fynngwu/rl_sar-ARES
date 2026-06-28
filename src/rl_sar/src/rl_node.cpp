@@ -40,7 +40,7 @@ public:
         xbox_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
             "/xbox_vel", 10, std::bind(&AresRLNode::XboxVelCallback, this, _1));
 
-        selected_policy_ = policy_name.empty() ? "dream_waq/dream_waq" : policy_name;
+        selected_policy_ = policy_name.empty() ? "dogv2_cts/cts" : policy_name;
 
         if (!InitRL(selected_policy_)) {
             RCLCPP_FATAL(get_logger(), "RL init failed for %s — aborting", selected_policy_.c_str());
@@ -243,14 +243,14 @@ private:
     DriverMode driver_mode_{DriverMode::DISABLE};
     std::optional<rclcpp::Time> last_sensor_warn_;
 
-    std::string selected_policy_{"dream_waq/dream_waq"};
+    std::string selected_policy_{"dogv2_cts/cts"};
 };
 
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<AresRLNode>(
-        argc > 1 ? argv[1] : "dream_waq/dream_waq");
+        argc > 1 ? argv[1] : "dogv2_cts/cts");
     rclcpp::executors::MultiThreadedExecutor exec;
     exec.add_node(node);
     exec.spin();

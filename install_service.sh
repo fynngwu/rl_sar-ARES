@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="ares_rl.service"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
-DEFAULT_POLICY="dream_waq/dream_waq"
+DEFAULT_POLICY="dogv2_cts/cts"
 REAL_USER="${SUDO_USER:-$USER}"
 REAL_HOME="$(eval echo "~${REAL_USER}")"
 BASHRC="${REAL_HOME}/.bashrc"

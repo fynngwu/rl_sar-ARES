@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$SCRIPT_DIR/src/rl_sar/build/bin"
 DRIVER_LIB_DIR="$SCRIPT_DIR/driver"
 ONNX_LIB_DIR="$SCRIPT_DIR/library/inference_runtime/onnxruntime/lib"
-POLICY="${1:-dream_waq/dream_waq}"
+POLICY="${1:-dogv2_cts/cts}"
 
 source /opt/ros/humble/setup.bash
 export LD_LIBRARY_PATH="$DRIVER_LIB_DIR:$ONNX_LIB_DIR:${LD_LIBRARY_PATH:-}"
