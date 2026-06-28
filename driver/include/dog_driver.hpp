@@ -95,6 +95,10 @@ public:
     // Blocks for ~240ms. Returns true if all components online after reconnect.
     bool ReconnectAll();
 
+    // Enable/disable automatic fault recovery in CAN RX thread.
+    // When false, motors that fault will NOT be auto-re-enabled by the driver.
+    void SetAutoRecovery(bool enabled);
+
     DogDriver(const DogDriver&) = delete;
     DogDriver& operator=(const DogDriver&) = delete;
 

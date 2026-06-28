@@ -44,8 +44,6 @@ void DogDriver::Init() {
             motor_info->host_id = HOST_ID;
             motor_info->max_torque = MAX_TORQUE;
             motor_info->max_speed = MAX_SPEED;
-            motor_info->max_kp = 500.0f;
-            motor_info->max_kd = 5.0f;
             int idx = motor_controller_->BindMotor(kCanNames[leg], std::move(motor_info));
             motor_indices_[global_idx] = idx;
 
@@ -58,8 +56,6 @@ void DogDriver::Init() {
             try {
                 motor_controller_->EnableMotor(idx);
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                motor_controller_->EnableAutoReport(idx);
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
                 MIT_params params;
                 params.kp = DEFAULT_KP;
@@ -92,46 +88,46 @@ void DogDriver::Init() {
 bool DogDriver::ReconnectAll() {
     if (!motor_controller_) return false;
 
-    motor_initialized_.fill(false);
+    int offline_count = 0;
+    int reconnected_count = 0;
 
-    for (int leg = 0; leg < NUM_LEGS; ++leg) {
-        bool can_ok = can_interfaces_[leg] && can_interfaces_[leg]->IsOpen();
-        for (int j = 0; j < JOINTS_PER_LEG; ++j) {
-            int global_idx = leg + j * NUM_LEGS;
-            int idx = motor_indices_[global_idx];
+    for (int i = 0; i < NUM_JOINTS; ++i) {
+        if (motor_initialized_[i] && motor_controller_->IsMotorOnline(motor_indices_[i]))
+            continue;
 
-            if (!can_ok) continue;
+        int idx = motor_indices_[i];
+        int leg = i % NUM_LEGS;
+        if (!can_interfaces_[leg] || !can_interfaces_[leg]->IsOpen()) continue;
 
-            try {
-                motor_controller_->EnableMotor(idx);
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                motor_controller_->EnableAutoReport(idx);
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
-                MIT_params params;
-                params.kp = DEFAULT_KP;
-                params.kd = DEFAULT_KD;
-                params.vel_limit = MAX_SPEED;
-                params.torque_limit = MAX_TORQUE;
-                motor_controller_->SetMITParams(idx, params);
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-
-                motor_initialized_[global_idx] = true;
-            } catch (const std::exception& e) {
-                std::cout << "[DogDriver] Motor " << global_idx
-                          << " reinit failed: " << e.what() << std::endl;
-            }
+        try {
+            motor_controller_->EnableMotorOnly(idx);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            motor_initialized_[i] = true;
+            ++reconnected_count;
+        } catch (const std::exception& e) {
+            std::cout << "[DogDriver] Motor " << i
+                      << " reinit failed: " << e.what() << std::endl;
         }
+        ++offline_count;
     }
 
-    // IMU 只在断开时重建
     if (!imu_ || !imu_->IsConnected()) {
         imu_.reset();
         imu_ = std::make_unique<IMUComponent>(kIMUDev);
         imu_connected_ = imu_->IsConnected();
     }
 
-    return IsHealthy();
+    if (offline_count > 0) {
+        std::cout << "[DogDriver] Reconnect: " << reconnected_count
+                  << "/" << offline_count << " offline motors re-enabled"
+                  << std::endl;
+    }
+
+    return offline_count == 0 || reconnected_count > 0;
+}
+
+void DogDriver::SetAutoRecovery(bool enabled) {
+    motor_controller_->SetAutoRecovery(enabled);
 }
 
 DogDriver::~DogDriver() = default;
@@ -251,11 +247,6 @@ int DogDriver::SetMITParams(int joint_idx, float kp, float kd) {
     MIT_params params;
     params.kp = kp;
     params.kd = kd;
-    // if (joint_idx >= 8) {
-    //     const float knee_scale = KNEE_GEAR_RATIO * KNEE_GEAR_RATIO;
-    //     params.kp /= knee_scale;
-    //     params.kd /= knee_scale;
-    // }
     params.vel_limit = MAX_SPEED;
     params.torque_limit = MAX_TORQUE;
     return motor_controller_->SetMITParams(motor_indices_[joint_idx], params);

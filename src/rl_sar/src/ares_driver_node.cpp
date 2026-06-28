@@ -166,7 +166,7 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     rclcpp::init(argc, argv);
-    std::string policy_name = (argc > 1) ? argv[1] : "dream_waq/dream_waq";
+    std::string policy_name = (argc > 1) ? argv[1] : "dogv2_cts/cts";
     RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node (policy: %s)...", policy_name.c_str());
 
     auto node = std::make_shared<AresDriverNode>(policy_name);

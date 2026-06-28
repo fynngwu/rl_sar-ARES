@@ -6,6 +6,7 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <chrono>
 
 struct motor_state {
     float position;
@@ -33,8 +34,6 @@ public:
 
         float max_torque;
         float max_speed;
-        float max_kp;
-        float max_kd;
     };
     int BindMotor(const char* can_if, std::unique_ptr<struct MotorInfo> motor_info);
     struct motor_state GetMotorState(int motor_idx);
@@ -42,6 +41,7 @@ public:
     struct MIT_params GetMITParams(int motor_idx);
     int SendMITCommand(int motor_idx, float pos);
     int EnableMotor(int motor_idx);
+    int EnableMotorOnly(int motor_idx);
     int DisableMotor(int motor_idx);
     int ClearMotor(int motor_idx);
     bool IsMotorOnline(int motor_idx);
@@ -57,20 +57,11 @@ public:
     // Callback for CAN RX
     void HandleCANMessage(const struct device *dev, struct can_frame *frame);
 
+    // Enable/disable automatic fault recovery (Disable→Clear→Enable) in CAN RX thread.
+    // When false, motors that fault will NOT be auto-re-enabled.
+    void SetAutoRecovery(bool enabled);
+
 private:
-    // 通信类型
-    const uint32_t COMM_OPERATION_CONTROL = 1;
-    const uint32_t COMM_ENABLE = 3;
-    const uint32_t COMM_WRITE_PARAMETER = 18;
-
-    // 参数 ID
-    const uint16_t PARAM_MODE = 0x7005;
-    const uint16_t PARAM_VELOCITY_LIMIT = 0x7017;
-    const uint16_t PARAM_TORQUE_LIMIT = 0x700B;
-
-    // Callback for CAN RX
-    // void HandleCANMessage(const struct device *dev, struct can_frame *frame);
-
     float uint16_to_float(uint16_t x, float x_min, float x_max, int bits);
     int float_to_uint(float x, float x_min, float x_max, int bits);
     
@@ -81,11 +72,14 @@ private:
         int host_id;
         bool enabled;
         bool online;
-        std::chrono::steady_clock::time_point last_online_time;
 
         struct MIT_params mit_params;
         struct motor_state state;
-        int offline_count;
+
+        float target_pos = 0.0f;
+        float target_radps = 0.0f;
+        float target_torque = 0.0f;
+        std::chrono::steady_clock::time_point last_response_time;
         uint8_t error_code = 0;
         uint8_t pattern = 0;
     };
@@ -96,5 +90,6 @@ private:
 
     std::thread control_thread;
     std::atomic<bool> running;
+    std::atomic<bool> auto_recovery_{true};
     std::recursive_mutex motor_data_mutex;
 };

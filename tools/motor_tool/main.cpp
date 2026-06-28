@@ -73,8 +73,6 @@ struct MotorCtx {
             info->host_id = HOST_ID;
             info->max_torque = MAX_TORQUE;
             info->max_speed = MAX_SPEED;
-            info->max_kp = 500.0f;
-            info->max_kd = 5.0f;
             motor_idx[j] = ctrl->BindMotor(kCanNames[ci], std::move(info));
             bound[j] = true;
         }

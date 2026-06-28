@@ -31,12 +31,6 @@ public:
         float angular_z = 0.0f;
     };
 
-    struct GamepadState {
-        bool connected = false;
-        bool buttons[64]{};
-        float axes[64]{};
-    };
-
     AresDriverCore(const std::string& policy_dir, const std::string& policy_name);
     ~AresDriverCore();
 
@@ -47,16 +41,12 @@ public:
     JointFeedback GetTopicFeedback() const;
     ImuData GetImuData() const;
     GamepadCommand PollGamepad();
-    GamepadState PollGamepadState();
-    bool GetGamepadButton(int button) const;
-    float GetGamepadAxis(int axis) const;
 
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                         const std::vector<float>& torque);
 
     DriverMode GetMode() const;
     void PrintModeHelp() const;
-    bool RequestModeChange(DriverMode target);
 
     const std::vector<float>& config_kp() const;
     const std::vector<float>& config_kd() const;

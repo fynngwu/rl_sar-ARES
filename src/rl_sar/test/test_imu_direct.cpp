@@ -39,7 +39,7 @@ int main(int argc, char** argv)
     signal(SIGALRM, alarm_handler);
     alarm(10); // 10 second watchdog
 
-    const char* policy_name = argc > 1 ? argv[1] : "dream_waq/dream_waq";
+    const char* policy_name = argc > 1 ? argv[1] : "dogv2_cts/cts";
 
     // Write results to a file so dog_driver stdout noise doesn't hide them
     const char* out_path = "/tmp/imu_test_results.txt";
