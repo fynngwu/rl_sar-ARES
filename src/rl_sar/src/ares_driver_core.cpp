@@ -81,10 +81,26 @@ public:
         std::lock_guard<std::mutex> lock(gamepad_mutex_);
         if (!gamepad_ || !gamepad_->IsConnected()) return cmd;
 
-        if (gamepad_->GetButton(7))
-            height_value_ = std::min(HEIGHT_MAX, height_value_ + HEIGHT_STEP);
-        if (gamepad_->GetButton(10))
-            height_value_ = std::max(HEIGHT_MIN, height_value_ - HEIGHT_STEP);
+        auto now = std::chrono::steady_clock::now();
+        float dpad_y = gamepad_->GetAxis(7);
+        if ((now - last_height_change_) >= std::chrono::milliseconds(200)) {
+            if (dpad_y < -0.5f) {
+                float old = height_value_;
+                height_value_ = std::min(HEIGHT_MAX, height_value_ + HEIGHT_STEP);
+                if (height_value_ != old) {
+                    printf("[GAMEPAD] DPad↑ Height: %.3f → %.3f\n", old, height_value_);
+                    last_height_change_ = now;
+                }
+            }
+            if (dpad_y > 0.5f) {
+                float old = height_value_;
+                height_value_ = std::max(HEIGHT_MIN, height_value_ - HEIGHT_STEP);
+                if (height_value_ != old) {
+                    printf("[GAMEPAD] DPad↓ Height: %.3f → %.3f\n", old, height_value_);
+                    last_height_change_ = now;
+                }
+            }
+        }
 
         cmd.connected = true;
         cmd.linear_x = -gamepad_->GetAxis(1) * gamepad_scale_;
@@ -260,8 +276,8 @@ private:
         const char* gp = GamepadStatusStr();
         int motors = driver_ ? driver_->OnlineMotorCount() : 0;
 
-        printf("[STATUS] IMU=%s, Motors=%d/%d, Gamepad=%s\n",
-               imu ? "yes" : "no", motors, NUM_JOINTS, gp);
+        printf("[STATUS] IMU=%s, Motors=%d/%d, Gamepad=%s, Height=%.3f\n",
+               imu ? "yes" : "no", motors, NUM_JOINTS, gp, height_value_);
 
         if (!imu) {
             std::lock_guard<std::mutex> lock(driver_mutex_);
@@ -427,10 +443,11 @@ private:
     std::vector<float> config_kd_;
     std::vector<float> config_torque_;
     float gamepad_scale_ = 0.0f;
-    static constexpr float HEIGHT_MIN = -0.05f;
+    static constexpr float HEIGHT_MIN = -0.15f;
     static constexpr float HEIGHT_MAX = 0.05f;
-    static constexpr float HEIGHT_STEP = 0.005f;
+    static constexpr float HEIGHT_STEP = 0.03f;
     float height_value_ = 0.0f;
+    std::chrono::steady_clock::time_point last_height_change_{};
     bool gamepad_connected_logged_ = false;
     bool driver_connected_logged_ = false;
     std::chrono::steady_clock::time_point last_reconnect_{};

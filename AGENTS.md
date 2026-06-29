@@ -16,6 +16,7 @@
 - `src/rl_sar/src/ares_driver_core.cpp` — 驱动核心逻辑 (AresDriverCore 类)
 - `driver/` — DogDriver 硬件抽象层 (CAN + IMU + Gamepad)
 - `policy/` — RL 策略配置 + ONNX 模型
+- `policy/dogv2_cts/cts/config.yaml` — **当前开发策略 (CTS) 的配置文件**，包含 gamepad_limits、PD gains、关节映射等
 - `library/inference_runtime/onnxruntime/` — ONNX Runtime 运行时
 
 ## Architecture: State Machine
