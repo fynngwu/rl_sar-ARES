@@ -107,11 +107,21 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
         // Load gamepad limits from YAML (required)
         if (rc["gamepad_limits"]) {
             auto gl = rc["gamepad_limits"];
-            gamepad_limits_[0] = {gl["linear_x"][0].as<float>(), gl["linear_x"][1].as<float>()};
-            gamepad_limits_[1] = {gl["linear_y"][0].as<float>(), gl["linear_y"][1].as<float>()};
-            gamepad_limits_[2] = {gl["angular_z"][0].as<float>(), gl["angular_z"][1].as<float>()};
+            if (gl["linear_x"])
+                gamepad_limits_.push_back({gl["linear_x"][0].as<float>(), gl["linear_x"][1].as<float>()});
+            if (gl["linear_y"])
+                gamepad_limits_.push_back({gl["linear_y"][0].as<float>(), gl["linear_y"][1].as<float>()});
+            if (gl["angular_z"])
+                gamepad_limits_.push_back({gl["angular_z"][0].as<float>(), gl["angular_z"][1].as<float>()});
+            if (gl["height"])
+                gamepad_limits_.push_back({gl["height"][0].as<float>(), gl["height"][1].as<float>()});
         } else {
             fprintf(stderr, "[RL] ERROR: gamepad_limits not found in config\n");
+            return false;
+        }
+        if (gamepad_limits_.size() < commands_scale_.size()) {
+            fprintf(stderr, "[RL] ERROR: gamepad_limits (%zu) < commands_scale (%zu)\n",
+                    gamepad_limits_.size(), commands_scale_.size());
             return false;
         }
 
@@ -165,7 +175,7 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
     obs_.lin_vel     = {0, 0, 0};
     obs_.ang_vel     = {0, 0, 0};
     obs_.gravity_vec = {0, 0, -1};
-    obs_.commands    = {0, 0, 0};
+    obs_.commands.assign(commands_scale_.size(), 0.0f);
     obs_.base_quat   = {1, 0, 0, 0};
     obs_.dof_pos     = default_dof_pos_;
     obs_.dof_vel.assign(num_of_dofs_, 0);
@@ -196,7 +206,8 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
 }
 
 void AresRL::RunModel(const float imu_gyro[3], const float imu_gravity[3],
-                       const float commands[3], const float joint_pos[12],
+                       const float* commands, int num_commands,
+                       const float joint_pos[12],
                        const float joint_vel[12], const float joint_torque[12])
 {
     if (current_state_ == State::STOPPED || !rl_init_done_)
@@ -204,7 +215,7 @@ void AresRL::RunModel(const float imu_gyro[3], const float imu_gravity[3],
 
     obs_.ang_vel     = {imu_gyro[0], imu_gyro[1], imu_gyro[2]};
     obs_.gravity_vec = {imu_gravity[0], imu_gravity[1], imu_gravity[2]};
-    obs_.commands    = {commands[0], commands[1], commands[2]};
+    obs_.commands.assign(commands, commands + std::min(num_commands, static_cast<int>(commands_scale_.size())));
     for (int i = 0; i < num_of_dofs_; ++i) {
         obs_.dof_pos[i] = joint_pos[i];
         obs_.dof_vel[i] = joint_vel[i];
@@ -323,7 +334,7 @@ void AresRL::EnsureVectorSizes()
 {
     auto sz = static_cast<size_t>(num_of_dofs_);
     if (action_scale_.size() < sz)       action_scale_.resize(sz, 0.25f);
-    if (commands_scale_.size() < 3)      commands_scale_.resize(3, 1.0f);
+    if (commands_scale_.empty())      commands_scale_.resize(1, 1.0f);
     if (default_dof_pos_.size() < sz)    default_dof_pos_.resize(sz, 0.0f);
     if (clip_actions_upper_.size() < sz) clip_actions_upper_.resize(sz, 1.0f);
     if (clip_actions_lower_.size() < sz) clip_actions_lower_.resize(sz, -1.0f);
@@ -335,8 +346,10 @@ void AresRL::ComputeObsDims()
     for (const std::string& key : observations_) {
         int dim = 0;
         if (key == "lin_vel" || key == "ang_vel" ||
-            key == "gravity_vec" || key == "commands")
+            key == "gravity_vec")
             dim = 3;
+        else if (key == "commands")
+            dim = static_cast<int>(commands_scale_.size());
         else if (key == "dof_pos" || key == "dof_vel" || key == "actions")
             dim = num_of_dofs_;
         if (dim > 0) obs_dims_.push_back(dim);

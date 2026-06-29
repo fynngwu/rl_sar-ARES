@@ -22,8 +22,9 @@ public:
     bool Init(const std::string& policy_dir, const std::string& policy_name);
 
     void RunModel(const float imu_gyro[3], const float imu_gravity[3],
-                  const float commands[3], const float joint_pos[12],
-                  const float joint_vel[12], const float joint_torque[12]);
+                  const float* commands, int num_commands,
+                  const float joint_pos[12], const float joint_vel[12],
+                  const float joint_torque[12]);
 
     const std::vector<float>& GetTargetPositions() const { return latest_target_pos_; }
     const std::vector<float>& GetDefaultDofPos() const { return default_dof_pos_; }
@@ -31,11 +32,12 @@ public:
     const std::vector<float>& GetKd() const { return current_kd_; }
     const std::vector<float>& GetTorqueLimits() const { return current_torque_limits_; }
     const std::vector<std::pair<float, float>>& GetPositionLimits() const { return position_limits_; }
-    const std::array<std::pair<float, float>, 3>& GetGamepadLimits() const { return gamepad_limits_; }
+    const std::vector<std::pair<float, float>>& GetGamepadLimits() const { return gamepad_limits_; }
     const std::array<int, 12>& GetTopicToDriver() const { return topic_to_driver_; }
     const std::array<int, 12>& GetDriverToTopic() const { return driver_to_topic_; }
 
     int    GetNumDofs() const { return num_of_dofs_; }
+    int    GetNumCommands() const { return static_cast<int>(commands_scale_.size()); }
     float  GetDt() const { return dt_; }
     int    GetDecimation() const { return decimation_; }
 
@@ -87,7 +89,7 @@ private:
     std::vector<float> current_kp_, current_kd_, current_torque_limits_;
 
     std::vector<std::pair<float, float>> position_limits_;
-    std::array<std::pair<float, float>, 3> gamepad_limits_{};
+    std::vector<std::pair<float, float>> gamepad_limits_;
 
     std::array<int, 12> topic_to_driver_{}, driver_to_topic_{};
 

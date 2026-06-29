@@ -111,7 +111,8 @@ private:
             return;
 
         std::array<float, 12> joint_pos, joint_vel, joint_torque;
-        std::array<float, 3> imu_gyro, imu_gravity, commands;
+        std::array<float, 3> imu_gyro, imu_gravity;
+        std::vector<float> commands;
         bool ready;
 
         {
@@ -130,7 +131,8 @@ private:
         if (!ready) return;
 
         rl_.RunModel(imu_gyro.data(), imu_gravity.data(), commands.data(),
-                     joint_pos.data(), joint_vel.data(), joint_torque.data());
+                     commands.size(), joint_pos.data(), joint_vel.data(),
+                     joint_torque.data());
     }
 
     void RobotControl()
@@ -218,9 +220,14 @@ private:
     {
         Lock lock(data_mutex_);
         const auto& limits = rl_.GetGamepadLimits();
-        commands_buffer_[0] = std::clamp(static_cast<float>(msg->linear.x), limits[0].first, limits[0].second);
-        commands_buffer_[1] = std::clamp(static_cast<float>(msg->linear.y), limits[1].first, limits[1].second);
-        commands_buffer_[2] = std::clamp(static_cast<float>(msg->angular.z), limits[2].first, limits[2].second);
+        int n = rl_.GetNumCommands();
+        if ((int)commands_buffer_.size() < n)
+            commands_buffer_.resize(n, 0.0f);
+
+        if (n > 0) commands_buffer_[0] = std::clamp(static_cast<float>(msg->linear.x), limits[0].first, limits[0].second);
+        if (n > 1) commands_buffer_[1] = std::clamp(static_cast<float>(msg->linear.y), limits[1].first, limits[1].second);
+        if (n > 2) commands_buffer_[2] = std::clamp(static_cast<float>(msg->angular.z), limits[2].first, limits[2].second);
+        if (n > 3) commands_buffer_[3] = std::clamp(static_cast<float>(msg->linear.z), limits[3].first, limits[3].second);
     }
 
     AresRL rl_;
@@ -235,7 +242,8 @@ private:
     std::mutex data_mutex_, output_mutex_;
 
     std::array<float, 12> joint_pos_{}, joint_vel_{}, joint_torque_{};
-    std::array<float, 3>  commands_buffer_{}, imu_gyro_{}, imu_gravity_{};
+    std::array<float, 3>  imu_gyro_{}, imu_gravity_{};
+    std::vector<float>    commands_buffer_;
 
     bool imu_received_{false}, motor_feedback_received_{false};
     bool all_sensors_ready_{false};
