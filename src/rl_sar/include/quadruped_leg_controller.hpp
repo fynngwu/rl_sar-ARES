@@ -4,6 +4,7 @@
 #include <array>
 #include <string>
 #include <algorithm>
+#include <cstdio>
 #include <Eigen/Dense>
 
 constexpr double PI = 3.14159265358979323846;
@@ -13,7 +14,7 @@ struct Vec3 { double x, y, z; };
 
 struct GaitParams {
     double period      = 0.8;     // gait period [s]
-    double duty_factor = 0.6;     // stance ratio
+    double duty_factor = 0.5;     // stance ratio
     double step_height = 0.05;    // swing lift [m]
     double max_stride  = 0.12;    // max half-stride [m]
 };
@@ -47,6 +48,12 @@ public:
 
         stand_height_ = 0.3;
 
+        // Workspace limits (hip frame)
+        x_min_ = -0.15;  x_max_ = 0.15;
+        y_min_ = -0.1;   y_max_ = 0.1;
+        r_min_ = 0.15;   r_max_ = 0.38;
+        z_min_ = -0.35;   z_max_ = -0.15;
+
         // Joint offsets: left legs and right legs have opposite signs
         joint_offsets_ <<  0.0,   0.0,   0.0,   0.0,    // abad:  LF, RF, LH, RH
                           -1.0,   1.0,  -1.0,   1.0,    // hip:   LF, RF, LH, RH
@@ -64,12 +71,27 @@ public:
             {"LH", {-0.16,  0.0675, 0.0}, 0.5},
             {"RH", {-0.16, -0.0675, 0.0}, 0.0},
         }};
+
+        // Internal time: default start at 0.5s, dt=0.02 (50Hz)
+        t_ = 0.5;
+        dt_ = 0.02;
     }
 
     void set_gait(const GaitParams& g) { gait_ = g; }
     void set_stand_height(double h) { stand_height_ = h; }
+    void set_dt(double dt) { dt_ = dt; }
+    double dt() const { return dt_; }
 
-    // Update all 4 legs, return state array
+    void reset() { t_ = 0.5; }
+
+    // Update all 4 legs using internal time, return state array
+    std::array<LegState, 4> update(const GaitCommand& cmd) {
+        auto states = update(t_, cmd);
+        t_ += dt_;
+        return states;
+    }
+
+    // Update all 4 legs with explicit time
     std::array<LegState, 4> update(double t, const GaitCommand& cmd) {
         std::array<LegState, 4> states;
         for (int i = 0; i < 4; ++i) {
@@ -90,14 +112,14 @@ public:
         // Foot target in hip frame
         Vec3 foot = gen_foot_hip(t, leg, cmd);
 
-        // Solve IK
+        // Solve IK (clamps out-of-workspace to limits)
         Eigen::Vector3d q = solve_ik(foot);
         Eigen::Vector3d q_motor = to_motor_angles(leg_idx, q);
 
         LegState s;
-        s.foot      = foot;
-        s.phase     = phase;
-        s.is_swing  = swing;
+        s.foot   = foot;
+        s.phase  = phase;
+        s.is_swing = swing;
         s.q         = q_motor;
         s.q_deg     = q_motor * RAD2DEG;
         return s;
@@ -111,9 +133,9 @@ public:
         foot.z = -stand_height_;
 
         bool standing =
-            std::abs(cmd.vx) < 1e-4 &&
-            std::abs(cmd.vy) < 1e-4 &&
-            std::abs(cmd.wz) < 1e-4;
+            std::abs(cmd.vx) < 0.05 &&
+            std::abs(cmd.vy) < 0.05 &&
+            std::abs(cmd.wz) < 0.05;
 
         if (standing) {
             return foot;
@@ -145,10 +167,13 @@ public:
     }
 
     // 3-DOF IK: foot_hip -> [q_abad, q_hip, q_knee]
+    // Out-of-workspace values are clamped to limits before solving
     Eigen::Vector3d solve_ik(const Vec3& p_hip) const {
-        double x = p_hip.x;
-        double y = p_hip.y;
-        double z = p_hip.z;
+        double x = clamp(p_hip.x, x_min_, x_max_);
+        double y = clamp(p_hip.y, y_min_, y_max_);
+        double z = clamp(p_hip.z, z_min_, z_max_);
+
+        
 
         // q1: abduction
         double q1 = std::atan2(y, -z);
@@ -173,6 +198,7 @@ public:
     double L2() const { return L2_; }
     double L3() const { return L3_; }
     double stand_height() const { return stand_height_; }
+    double time() const { return t_; }
     const Eigen::Matrix<double, 3, 4>& joint_offsets() const { return joint_offsets_; }
     const Eigen::Matrix<double, 3, 4>& joint_signs() const { return joint_signs_; }
     const LegConfig& leg(int i) const { return legs_[i]; }
@@ -185,10 +211,16 @@ public:
 private:
     double L2_, L3_;
     double stand_height_;
+    double x_min_, x_max_, y_min_, y_max_;
+    double r_min_, r_max_, z_min_, z_max_;
     Eigen::Matrix<double, 3, 4> joint_offsets_;  // [abad,hip,knee] x [LF,RF,LH,RH]
     Eigen::Matrix<double, 3, 4> joint_signs_;    // +1 normal, -1 reversed per joint per leg
     std::array<LegConfig, 4> legs_;
     GaitParams gait_;
+
+    // Internal time management
+    double t_;
+    double dt_;
 
     static double clamp(double x, double lo, double hi) {
         return std::max(lo, std::min(x, hi));

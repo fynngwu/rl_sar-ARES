@@ -3,6 +3,7 @@
 
 #include "dog_driver.hpp"
 #include "observations.hpp"
+#include "quadruped_leg_controller.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -102,11 +103,15 @@ public:
             }
         }
 
+        auto apply_deadzone = [](float value, float deadzone = 0.05f) -> float {
+            return std::abs(value) < deadzone ? 0.0f : value;
+        };
+
         cmd.connected = true;
-        cmd.linear_x = -gamepad_->GetAxis(1) * gamepad_scale_;
-        cmd.linear_y = -gamepad_->GetAxis(0) * gamepad_scale_;
+        cmd.linear_x = apply_deadzone(-gamepad_->GetAxis(1)) * gamepad_scale_;
+        cmd.linear_y = apply_deadzone(-gamepad_->GetAxis(0)) * gamepad_scale_;
         cmd.linear_z = height_value_;
-        cmd.angular_z = -gamepad_->GetAxis(3) * gamepad_scale_;
+        cmd.angular_z = apply_deadzone(-gamepad_->GetAxis(3)) * gamepad_scale_;
         return cmd;
     }
 
@@ -203,6 +208,35 @@ public:
                     next_tick = std::chrono::steady_clock::now();
                 break;
             }
+            case DriverMode::GAIT: {
+                GamepadCommand gp = PollGamepad();
+
+                GaitCommand gait_cmd{gp.linear_x, gp.linear_y, gp.angular_z};
+                if (gp.linear_z != 0.0f)
+                    gait_controller_.set_stand_height(0.3 + gp.linear_z);
+                auto states = gait_controller_.update(gait_cmd);
+
+                constexpr int LEG_JOINTS[4][3] = {
+                    {0, 4, 8},
+                    {2, 6, 10},
+                    {1, 5, 9},
+                    {3, 7, 11},
+                };
+                std::array<float, NUM_JOINTS> cmd{};
+                for (int leg = 0; leg < 4; ++leg)
+                    for (int ji = 0; ji < 3; ++ji)
+                        cmd[LEG_JOINTS[leg][ji]] = (float)states[leg].q(ji);
+
+                {
+                    std::lock_guard<std::mutex> lock(driver_mutex_);
+                    if (driver_) driver_->SetAllJointPositions(cmd);
+                }
+                next_tick += LOOP_DT;
+                std::this_thread::sleep_until(next_tick);
+                if (std::chrono::steady_clock::now() > next_tick + LOOP_DT)
+                    next_tick = std::chrono::steady_clock::now();
+                break;
+            }
             case DriverMode::STAND: {
                 if (stand_step_ <= STAND_STEPS) {
                     float alpha = (float)stand_step_ / STAND_STEPS;
@@ -214,13 +248,7 @@ public:
                         if (driver_) driver_->SetAllJointPositions(target);
                     }
                     stand_step_++;
-                } else {
-                    std::array<float, NUM_JOINTS> target{};
-                    {
-                        std::lock_guard<std::mutex> lock(driver_mutex_);
-                        if (driver_) driver_->SetAllJointPositions(target);
-                    }
-                }
+                } 
                 next_tick = std::chrono::steady_clock::now();
                 std::this_thread::sleep_for(LOOP_DT);
                 break;
@@ -242,6 +270,7 @@ private:
         case DriverMode::STAND:   return "STAND";
         case DriverMode::RL:      return "RL";
         case DriverMode::DAMPING: return "DAMPING";
+        case DriverMode::GAIT:    return "GAIT";
         }
         return "???";
     }
@@ -364,6 +393,13 @@ private:
             driver_->EnableAll();
             printf("[MODE] → DAMPING\n");
             break;
+        case DriverMode::GAIT:
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            driver_->EnableAll();
+            gait_controller_.reset();
+            printf("[MODE] → GAIT\n");
+            break;
         }
     }
 
@@ -373,33 +409,33 @@ private:
         if (!gamepad_ || !gamepad_->IsConnected()) return;
 
         bool a     = gamepad_->GetButton(0);
+        bool b     = gamepad_->GetButton(1);
         bool x     = gamepad_->GetButton(2);
         bool y     = gamepad_->GetButton(3);
         bool lb    = gamepad_->GetButton(4);
         bool rb    = gamepad_->GetButton(5);
         bool start = gamepad_->GetButton(7);
-        bool lt    = gamepad_->GetAxis(2) > 0.5f;
 
         bool rb_x     = rb && x;
         bool lb_rb    = lb && rb;
         bool lb_start = lb && start;
         bool lb_a     = lb && a;
+        bool lb_b     = lb && b;
         bool lb_y     = lb && y;
-        bool lt_y     = lt && y;
 
         bool rb_x_edge     = rb_x     && !prev_rb_x_;
         bool lb_rb_edge    = lb_rb    && !prev_lb_rb_;
         bool lb_start_edge = lb_start && !prev_lb_start_;
         bool lb_a_edge     = lb_a     && !prev_lb_a_;
+        bool lb_b_edge     = lb_b     && !prev_lb_b_;
         bool lb_y_edge     = lb_y     && !prev_lb_y_;
-        bool lt_y_edge     = lt_y     && !prev_lt_y_;
 
         prev_rb_x_     = rb_x;
         prev_lb_rb_    = lb_rb;
         prev_lb_start_ = lb_start;
         prev_lb_a_     = lb_a;
+        prev_lb_b_     = lb_b;
         prev_lb_y_     = lb_y;
-        prev_lt_y_     = lt_y;
 
         if (rb_x_edge) {
             printf("[GAMEPAD] RB+X → DISABLE\n");
@@ -410,13 +446,16 @@ private:
         } else if (lb_a_edge) {
             printf("[GAMEPAD] LB+A → STAND\n");
             mode_ = DriverMode::STAND;
-        } else if (lt_y_edge) {
+        } else if (lb_y_edge) {
             if (mode_.load() == DriverMode::STAND) {
-                printf("[GAMEPAD] LT+Y → RL\n");
+                printf("[GAMEPAD] LB+Y → RL\n");
                 mode_ = DriverMode::RL;
             }
-        } else if (lb_y_edge) {
-            printf("[GAMEPAD] LB+Y → SELECT_LOCOMOTION\n");
+        } else if (lb_b_edge) {
+            if (mode_.load() == DriverMode::STAND) {
+                printf("[GAMEPAD] LB+B → GAIT\n");
+                mode_ = DriverMode::GAIT;
+            }
         } else if (lb_start_edge) {
             printf("[GAMEPAD] LB+Start → TOGGLE_RECORD\n");
         }
@@ -452,7 +491,9 @@ private:
     bool driver_connected_logged_ = false;
     std::chrono::steady_clock::time_point last_reconnect_{};
     bool prev_rb_x_ = false, prev_lb_rb_ = false, prev_lb_start_ = false;
-    bool prev_lb_a_ = false, prev_lb_y_ = false, prev_lt_y_ = false;
+    bool prev_lb_a_ = false, prev_lb_b_ = false, prev_lb_y_ = false;
+
+    QuadrupedLegController gait_controller_;
 };
 
 AresDriverCore::AresDriverCore(const std::string& policy_dir, const std::string& policy_name)

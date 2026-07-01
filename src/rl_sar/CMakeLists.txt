@@ -111,6 +111,7 @@ else()
 endif()
 
 find_package(Threads REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 if(SYSTEM_TYPE STREQUAL "Linux")
     set(YAML_CPP_LIBRARIES yaml-cpp)
@@ -215,7 +216,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
 
 if(DOG_DRIVER_LIB)
         add_library(ares_driver_core STATIC src/ares_driver_core.cpp)
-        target_include_directories(ares_driver_core PUBLIC include)
+        target_include_directories(ares_driver_core PUBLIC include ${EIGEN3_INCLUDE_DIR})
         target_link_libraries(ares_driver_core
             dog_driver
             ${YAML_CPP_LIBRARIES}
