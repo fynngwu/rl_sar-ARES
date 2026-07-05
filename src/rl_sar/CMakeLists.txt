@@ -56,7 +56,6 @@ endif()
 
 if(EXISTS "${ONNX_RUNTIME_DIR}/include" AND EXISTS "${ONNX_RUNTIME_DIR}/lib")
     set(USE_ONNX "ON")
-    add_compile_definitions(USE_ONNX)
 
     message(STATUS "Found ONNX Runtime at: ${ONNX_RUNTIME_DIR}")
 
@@ -89,6 +88,8 @@ if(EXISTS "${ONNX_RUNTIME_DIR}/include" AND EXISTS "${ONNX_RUNTIME_DIR}/lib")
     )
 
     if(ONNX_RUNTIME_LIB_PATH)
+        add_compile_definitions(USE_ONNX)
+
         if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
             add_library(onnxruntime_prebuilt STATIC IMPORTED GLOBAL)
         else()

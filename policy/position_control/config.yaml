@@ -1,0 +1,14 @@
+position_control:
+  # MIT position control gains used only by GAIT mode.
+  # torque_limits are still loaded from the selected policy config.
+  # Driver joint order: HipA[0..3], HipF/thigh[4..7], Knee[8..11].
+  joints:
+    hip:
+      kp: 25.0
+      kd: 0.8
+    thigh:
+      kp: 35.0
+      kd: 1.0
+    knee:
+      kp: 45.0
+      kd: 1.2

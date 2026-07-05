@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <strings.h>
 
 static constexpr const char* kJointNames[12] = {
     "FL_HipA", "RL_HipA", "FR_HipA", "RR_HipA",

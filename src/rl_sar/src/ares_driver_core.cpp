@@ -21,7 +21,7 @@
 class AresDriverCore::Impl {
 public:
     explicit Impl(const std::string& policy_dir, const std::string& policy_name)
-        : running_(true)
+        : policy_dir_(policy_dir), running_(true)
     {
         std::string config_path = policy_dir + "/" + policy_name + "/config.yaml";
         YAML::Node rc = YAML::LoadFile(config_path)[policy_name];
@@ -281,6 +281,59 @@ private:
             driver_->SetMITParams(i, 0.0f, 4.0f);
     }
 
+    struct JointPid {
+        float kp = 0.0f;
+        float kd = 0.0f;
+    };
+
+    static JointPid LoadJointPid(const YAML::Node& joints, const char* key)
+    {
+        YAML::Node node = joints[key];
+        if (!node)
+            throw std::runtime_error(std::string("Missing position_control.joints.") + key);
+        JointPid pid;
+        pid.kp = node["kp"].as<float>();
+        pid.kd = node["kd"].as<float>();
+        return pid;
+    }
+
+    void ApplyMotorParams(bool use_position_control_pid)
+    {
+        std::vector<float> kp = config_kp_;
+        std::vector<float> kd = config_kd_;
+
+        if (use_position_control_pid) {
+            std::string config_path = policy_dir_ + "/position_control/config.yaml";
+            try {
+                YAML::Node root = YAML::LoadFile(config_path);
+                YAML::Node rc = root["position_control"];
+                if (!rc || !rc["joints"])
+                    throw std::runtime_error("Missing position_control.joints");
+
+                JointPid hip = LoadJointPid(rc["joints"], "hip");
+                JointPid thigh = LoadJointPid(rc["joints"], "thigh");
+                JointPid knee = LoadJointPid(rc["joints"], "knee");
+
+                kp.assign(NUM_JOINTS, 0.0f);
+                kd.assign(NUM_JOINTS, 0.0f);
+                for (int i = 0; i < NUM_JOINTS; ++i) {
+                    const JointPid& pid = (i < 4) ? hip : (i < 8 ? thigh : knee);
+                    kp[i] = pid.kp;
+                    kd[i] = pid.kd;
+                }
+                printf("[DRIVER] Position control PID loaded: %s\n", config_path.c_str());
+            } catch (const std::exception& e) {
+                printf("[DRIVER] Position control PID unavailable (%s). Using policy motor params.\n",
+                       e.what());
+            }
+        }
+
+        for (int i = 0; i < NUM_JOINTS; ++i)
+            driver_->SetMITParams(i, kp[i], kd[i]);
+        for (int i = 0; i < NUM_JOINTS && i < static_cast<int>(config_torque_.size()); ++i)
+            driver_->SetTorqueLimit(i, config_torque_[i]);
+    }
+
     void TryCreateDriver()
     {
         try {
@@ -376,15 +429,13 @@ private:
             auto s = driver_->GetJointStates();
             stand_start_pos_ = s.position;
             driver_->SetAllJointPositions(stand_start_pos_);
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            ApplyMotorParams(false);
             stand_step_ = 0;
             printf("[MODE] → STAND\n");
             break;
         }
         case DriverMode::RL:
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            ApplyMotorParams(false);
             driver_->EnableAll();
             printf("[MODE] → RL\n");
             break;
@@ -394,8 +445,7 @@ private:
             printf("[MODE] → DAMPING\n");
             break;
         case DriverMode::GAIT:
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                driver_->SetMITParams(i, config_kp_[i], config_kd_[i]);
+            ApplyMotorParams(true);
             driver_->EnableAll();
             gait_controller_.reset();
             printf("[MODE] → GAIT\n");
@@ -465,6 +515,7 @@ private:
     std::unique_ptr<DogDriver> driver_;
     std::unique_ptr<Gamepad> gamepad_;
     std::string gamepad_name_;
+    std::string policy_dir_;
 
     std::thread worker_thread_;
     mutable std::mutex cmd_mutex_;
