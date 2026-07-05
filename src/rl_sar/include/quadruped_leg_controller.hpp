@@ -17,6 +17,7 @@ struct GaitParams {
     double duty_factor = 0.5;     // stance ratio
     double step_height = 0.05;    // swing lift [m]
     double max_stride  = 0.12;    // max half-stride [m]
+    double stride_scale = 1.0;     // runtime stride multiplier
 };
 
 struct GaitCommand {
@@ -145,9 +146,9 @@ public:
         double vx_leg = cmd.vx - cmd.wz * leg.hip_pos.y();
         double vy_leg = cmd.vy + cmd.wz * leg.hip_pos.x();
 
-        double stride_x = clamp(vx_leg * gait_.period * gait_.duty_factor,
+        double stride_x = clamp(vx_leg * gait_.period * gait_.duty_factor * gait_.stride_scale,
                                 -gait_.max_stride, gait_.max_stride);
-        double stride_y = clamp(vy_leg * gait_.period * gait_.duty_factor,
+        double stride_y = clamp(vy_leg * gait_.period * gait_.duty_factor * gait_.stride_scale,
                                 -gait_.max_stride, gait_.max_stride);
 
         double phase = std::fmod(t / gait_.period + leg.phase_offset, 1.0);

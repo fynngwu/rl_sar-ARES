@@ -12,3 +12,13 @@ position_control:
     knee:
       kp: 45.0
       kd: 1.2
+
+  motion:
+    period: 0.8
+    duty_factor: 0.5
+    step_height: 0.05
+    max_stride: 0.12
+    stride_scale_default: 1.0
+    stride_scale_min: 0.4
+    stride_scale_max: 1.6
+    stride_scale_step: 0.1

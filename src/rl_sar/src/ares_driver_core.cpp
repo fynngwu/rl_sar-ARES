@@ -84,6 +84,7 @@ public:
 
         auto now = std::chrono::steady_clock::now();
         float dpad_y = gamepad_->GetAxis(7);
+        float dpad_x = gamepad_->GetAxis(6);
         if ((now - last_height_change_) >= std::chrono::milliseconds(200)) {
             if (dpad_y < -0.5f) {
                 float old = height_value_;
@@ -102,6 +103,25 @@ public:
                 }
             }
         }
+        if (mode_.load() == DriverMode::GAIT &&
+            (now - last_stride_change_) >= std::chrono::milliseconds(200)) {
+            if (dpad_x > 0.5f) {
+                double old = stride_scale_value_;
+                stride_scale_value_ = std::min(stride_scale_max_, stride_scale_value_ + stride_scale_step_);
+                if (stride_scale_value_ != old) {
+                    printf("[GAMEPAD] DPad→ Stride: %.2f → %.2f\n", old, stride_scale_value_);
+                    last_stride_change_ = now;
+                }
+            }
+            if (dpad_x < -0.5f) {
+                double old = stride_scale_value_;
+                stride_scale_value_ = std::max(stride_scale_min_, stride_scale_value_ - stride_scale_step_);
+                if (stride_scale_value_ != old) {
+                    printf("[GAMEPAD] DPad← Stride: %.2f → %.2f\n", old, stride_scale_value_);
+                    last_stride_change_ = now;
+                }
+            }
+        }
 
         auto apply_deadzone = [](float value, float deadzone = 0.05f) -> float {
             return std::abs(value) < deadzone ? 0.0f : value;
@@ -112,6 +132,7 @@ public:
         cmd.linear_y = apply_deadzone(-gamepad_->GetAxis(0)) * gamepad_scale_;
         cmd.linear_z = height_value_;
         cmd.angular_z = apply_deadzone(-gamepad_->GetAxis(3)) * gamepad_scale_;
+        cmd.stride_scale = static_cast<float>(stride_scale_value_);
         return cmd;
     }
 
@@ -214,6 +235,8 @@ public:
                 GaitCommand gait_cmd{gp.linear_x, gp.linear_y, gp.angular_z};
                 if (gp.linear_z != 0.0f)
                     gait_controller_.set_stand_height(0.3 + gp.linear_z);
+                gait_params_.stride_scale = gp.stride_scale;
+                gait_controller_.set_gait(gait_params_);
                 auto states = gait_controller_.update(gait_cmd);
 
                 constexpr int LEG_JOINTS[4][3] = {
@@ -295,6 +318,72 @@ private:
         pid.kp = node["kp"].as<float>();
         pid.kd = node["kd"].as<float>();
         return pid;
+    }
+
+    static double LoadDoubleOrDefault(const YAML::Node& node, const char* key, double fallback)
+    {
+        return (node && node[key]) ? node[key].as<double>() : fallback;
+    }
+
+    void LoadPositionControlMotion()
+    {
+        gait_params_ = GaitParams{};
+        double stride_min = 0.4;
+        double stride_max = 1.6;
+        double stride_step = 0.1;
+        double stride_default = 1.0;
+
+        std::string config_path = policy_dir_ + "/position_control/config.yaml";
+        try {
+            YAML::Node root = YAML::LoadFile(config_path);
+            YAML::Node pc = root["position_control"];
+            YAML::Node motion = pc ? pc["motion"] : YAML::Node();
+            if (!motion) {
+                {
+                    std::lock_guard<std::mutex> lock(gamepad_mutex_);
+                    stride_scale_min_ = stride_min;
+                    stride_scale_max_ = stride_max;
+                    stride_scale_step_ = stride_step;
+                    stride_scale_value_ = stride_default;
+                }
+                gait_params_.stride_scale = stride_default;
+                gait_controller_.set_gait(gait_params_);
+                printf("[DRIVER] Position control motion unavailable. Using default gait params.\n");
+                return;
+            }
+
+            gait_params_.period = LoadDoubleOrDefault(motion, "period", gait_params_.period);
+            gait_params_.duty_factor = LoadDoubleOrDefault(motion, "duty_factor", gait_params_.duty_factor);
+            gait_params_.step_height = LoadDoubleOrDefault(motion, "step_height", gait_params_.step_height);
+            gait_params_.max_stride = LoadDoubleOrDefault(motion, "max_stride", gait_params_.max_stride);
+            stride_min = LoadDoubleOrDefault(motion, "stride_scale_min", stride_min);
+            stride_max = LoadDoubleOrDefault(motion, "stride_scale_max", stride_max);
+            stride_step = LoadDoubleOrDefault(motion, "stride_scale_step", stride_step);
+            stride_default = LoadDoubleOrDefault(motion, "stride_scale_default", stride_default);
+            stride_default = std::max(stride_min, std::min(stride_default, stride_max));
+            {
+                std::lock_guard<std::mutex> lock(gamepad_mutex_);
+                stride_scale_min_ = stride_min;
+                stride_scale_max_ = stride_max;
+                stride_scale_step_ = stride_step;
+                stride_scale_value_ = stride_default;
+            }
+            gait_params_.stride_scale = stride_default;
+            gait_controller_.set_gait(gait_params_);
+            printf("[DRIVER] Position control motion loaded: %s\n", config_path.c_str());
+        } catch (const std::exception& e) {
+            {
+                std::lock_guard<std::mutex> lock(gamepad_mutex_);
+                stride_scale_min_ = stride_min;
+                stride_scale_max_ = stride_max;
+                stride_scale_step_ = stride_step;
+                stride_scale_value_ = stride_default;
+            }
+            gait_params_.stride_scale = stride_default;
+            gait_controller_.set_gait(gait_params_);
+            printf("[DRIVER] Position control motion unavailable (%s). Using default gait params.\n",
+                   e.what());
+        }
     }
 
     void ApplyMotorParams(bool use_position_control_pid)
@@ -445,6 +534,7 @@ private:
             printf("[MODE] → DAMPING\n");
             break;
         case DriverMode::GAIT:
+            LoadPositionControlMotion();
             ApplyMotorParams(true);
             driver_->EnableAll();
             gait_controller_.reset();
@@ -538,6 +628,12 @@ private:
     static constexpr float HEIGHT_STEP = 0.03f;
     float height_value_ = 0.0f;
     std::chrono::steady_clock::time_point last_height_change_{};
+    GaitParams gait_params_;
+    double stride_scale_value_ = 1.0;
+    double stride_scale_min_ = 0.4;
+    double stride_scale_max_ = 1.6;
+    double stride_scale_step_ = 0.1;
+    std::chrono::steady_clock::time_point last_stride_change_{};
     bool gamepad_connected_logged_ = false;
     bool driver_connected_logged_ = false;
     std::chrono::steady_clock::time_point last_reconnect_{};

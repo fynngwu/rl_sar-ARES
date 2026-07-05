@@ -29,6 +29,7 @@ public:
         float linear_y = 0.0f;
         float linear_z = 0.0f;
         float angular_z = 0.0f;
+        float stride_scale = 1.0f;
     };
 
     AresDriverCore(const std::string& policy_dir, const std::string& policy_name);
