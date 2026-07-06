@@ -356,6 +356,7 @@ private:
             gait_params_.duty_factor = LoadDoubleOrDefault(motion, "duty_factor", gait_params_.duty_factor);
             gait_params_.step_height = LoadDoubleOrDefault(motion, "step_height", gait_params_.step_height);
             gait_params_.max_stride = LoadDoubleOrDefault(motion, "max_stride", gait_params_.max_stride);
+            gait_params_.foot_center_x = LoadDoubleOrDefault(motion, "foot_center_x", gait_params_.foot_center_x);
             stride_min = LoadDoubleOrDefault(motion, "stride_scale_min", stride_min);
             stride_max = LoadDoubleOrDefault(motion, "stride_scale_max", stride_max);
             stride_step = LoadDoubleOrDefault(motion, "stride_scale_step", stride_step);

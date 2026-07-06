@@ -15,9 +15,10 @@ struct Vec3 { double x, y, z; };
 struct GaitParams {
     double period      = 0.8;     // gait period [s]
     double duty_factor = 0.5;     // stance ratio
-    double step_height = 0.05;    // swing lift [m]
+    double step_height = 0.08;    // swing lift [m]
     double max_stride  = 0.12;    // max half-stride [m]
     double stride_scale = 1.0;     // runtime stride multiplier
+    double foot_center_x = -0.05;  // neutral foot x in hip frame [m]
 };
 
 struct GaitCommand {
@@ -129,7 +130,7 @@ public:
     // Foot trajectory in hip frame
     Vec3 gen_foot_hip(double t, const LegConfig& leg, const GaitCommand& cmd) const {
         Vec3 foot;
-        foot.x = 0.0;
+        foot.x = gait_.foot_center_x;
         foot.y = 0.0;
         foot.z = -stand_height_;
 
@@ -160,8 +161,9 @@ public:
             foot.y += stride_y * (0.5 - s);
         } else {
             double s = (phase - gait_.duty_factor) / (1.0 - gait_.duty_factor);
-            foot.x += stride_x * (-0.5 + s);
-            foot.y += stride_y * (-0.5 + s);
+            double c = s - std::sin(2.0 * PI * s) / (2.0 * PI);
+            foot.x += stride_x * (-0.5 + c);
+            foot.y += stride_y * (-0.5 + c);
             foot.z += gait_.step_height * 0.5 * (1.0 - std::cos(2.0 * PI * s));
         }
         return foot;
