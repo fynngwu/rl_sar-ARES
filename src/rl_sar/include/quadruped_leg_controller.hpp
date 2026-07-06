@@ -15,8 +15,8 @@ struct Vec3 { double x, y, z; };
 struct GaitParams {
     double period      = 0.8;     // gait period [s]
     double duty_factor = 0.5;     // stance ratio
-    double step_height = 0.08;    // swing lift [m]
-    double max_stride  = 0.12;    // max half-stride [m]
+    double step_height = 0.10;    // swing lift [m]
+    double max_stride  = 0.18;    // max half-stride [m]
     double stride_scale = 1.0;     // runtime stride multiplier
     double foot_center_x = -0.05;  // neutral foot x in hip frame [m]
 };

@@ -128,10 +128,14 @@ public:
         };
 
         cmd.connected = true;
-        cmd.linear_x = apply_deadzone(-gamepad_->GetAxis(1)) * gamepad_scale_;
-        cmd.linear_y = apply_deadzone(-gamepad_->GetAxis(0)) * gamepad_scale_;
+        float raw_x = -gamepad_->GetAxis(1);
+        float raw_y = -gamepad_->GetAxis(0);
+        float raw_yaw = -gamepad_->GetAxis(3);
+        float lateral_deadzone = (mode_.load() == DriverMode::GAIT) ? GAIT_LINEAR_Y_DEADZONE : 0.05f;
+        cmd.linear_x = apply_deadzone(raw_x) * gamepad_scale_;
+        cmd.linear_y = apply_deadzone(raw_y, lateral_deadzone) * gamepad_scale_;
+        cmd.angular_z = apply_deadzone(raw_yaw) * gamepad_scale_;
         cmd.linear_z = height_value_;
-        cmd.angular_z = apply_deadzone(-gamepad_->GetAxis(3)) * gamepad_scale_;
         cmd.stride_scale = static_cast<float>(stride_scale_value_);
         return cmd;
     }
@@ -627,6 +631,7 @@ private:
     static constexpr float HEIGHT_MIN = -0.15f;
     static constexpr float HEIGHT_MAX = 0.05f;
     static constexpr float HEIGHT_STEP = 0.03f;
+    static constexpr float GAIT_LINEAR_Y_DEADZONE = 0.20f;
     float height_value_ = 0.0f;
     std::chrono::steady_clock::time_point last_height_change_{};
     GaitParams gait_params_;

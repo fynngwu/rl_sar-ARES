@@ -4,20 +4,20 @@ position_control:
   # Driver joint order: HipA[0..3], HipF/thigh[4..7], Knee[8..11].
   joints:
     hip:
-      kp: 25.0
-      kd: 0.8
+      kp: 40.0
+      kd: 2.0
     thigh:
-      kp: 35.0
-      kd: 1.0
+      kp: 40.0
+      kd: 2.0
     knee:
-      kp: 45.0
-      kd: 1.2
+      kp: 40.0
+      kd: 2.0
 
   motion:
     period: 0.8
     duty_factor: 0.5
-    step_height: 0.08
-    max_stride: 0.12
+    step_height: 0.10
+    max_stride: 0.18
     foot_center_x: -0.05
     stride_scale_default: 1.0
     stride_scale_min: 0.4
