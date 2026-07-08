@@ -13,7 +13,7 @@ constexpr double RAD2DEG = 180.0 / PI;
 struct Vec3 { double x, y, z; };
 
 struct GaitParams {
-    double period      = 0.8;     // gait period [s]
+    double period      = 0.5;     // gait period [s]
     double duty_factor = 0.5;     // stance ratio
     double step_height = 0.10;    // swing lift [m]
     double max_stride  = 0.18;    // max half-stride [m]

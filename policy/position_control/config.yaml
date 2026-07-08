@@ -14,7 +14,7 @@ position_control:
       kd: 2.0
 
   motion:
-    period: 0.8
+    period: 0.5
     duty_factor: 0.5
     step_height: 0.10
     max_stride: 0.18
