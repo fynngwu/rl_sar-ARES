@@ -32,6 +32,7 @@ public:
         config_kd_ = yaml_utils::LoadScalarOrArray(rc["fixed_kd"], NUM_JOINTS);
         config_torque_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], NUM_JOINTS);
         gamepad_scale_ = rc["gamepad_scale"].as<float>();
+        rma_alpha_ = LoadDoubleOrDefault(rc, "rma_alpha", 0.5);
 
         TryCreateDriver();
         CheckGamepadConnection();
@@ -432,7 +433,8 @@ private:
     {
         try {
             driver_ = std::make_unique<DogDriver>();
-            printf("[DRIVER] DogDriver initialized\n");
+            driver_->SetRMAAlpha(static_cast<float>(rma_alpha_));
+            printf("[DRIVER] DogDriver initialized (rma_alpha=%.3f)\n", rma_alpha_);
         } catch (const std::exception& e) {
             printf("[DRIVER] Init failed: %s\n", e.what());
             driver_.reset();
@@ -628,6 +630,7 @@ private:
     std::vector<float> config_kd_;
     std::vector<float> config_torque_;
     float gamepad_scale_ = 0.0f;
+    float rma_alpha_ = 0.5f;
     static constexpr float HEIGHT_MIN = -0.15f;
     static constexpr float HEIGHT_MAX = 0.05f;
     static constexpr float HEIGHT_STEP = 0.03f;
