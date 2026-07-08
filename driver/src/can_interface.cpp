@@ -1,4 +1,6 @@
 #include "can_interface.hpp"
+#include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -9,7 +11,7 @@
 #include <linux/can/raw.h>
 #include <mutex>
 
-CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1), if_name(can_if) {
+CANInterface::CANInterface(const char* can_if) : can_socket(-1), if_name(can_if), running(false) {
     struct sockaddr_can addr;
     struct ifreq ifr;
 
@@ -110,10 +112,29 @@ const char* CANInterface::GetName() const {
 
 int CANInterface::SendMessage(const struct can_frame* frame) {
     if (can_socket < 0) return -1;
+
+    std::lock_guard<std::mutex> lock(send_mutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (now < enobufs_cooldown_until) {
+        return -ENOBUFS;
+    }
+
     int nbytes = write(can_socket, frame, sizeof(struct can_frame));
     if (nbytes != sizeof(struct can_frame)) {
-        perror("CAN write");
-        return -1;
+        const int err = (nbytes < 0) ? errno : EIO;
+        if (err == ENOBUFS) {
+            enobufs_cooldown_until = now + std::chrono::milliseconds(20);
+            if (now - last_enobufs_log >= std::chrono::seconds(1)) {
+                std::fprintf(stderr,
+                             "[CAN] %s write ENOBUFS: TX queue full, cooling down 20ms\n",
+                             if_name.c_str());
+                last_enobufs_log = now;
+            }
+            return -ENOBUFS;
+        }
+
+        std::fprintf(stderr, "[CAN] %s write failed: %s\n", if_name.c_str(), std::strerror(err));
+        return -err;
     }
     return 0;
 }

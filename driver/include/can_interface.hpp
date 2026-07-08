@@ -6,6 +6,7 @@
 #include <atomic>
 #include <string>
 #include <mutex>
+#include <chrono>
 
 #ifndef BIT
 #define BIT(n)  (1UL << (n))
@@ -46,4 +47,7 @@ private:
     std::thread can_thread;
     std::atomic<bool> running;
     std::mutex filter_mutex;
+    std::mutex send_mutex;
+    std::chrono::steady_clock::time_point enobufs_cooldown_until{};
+    std::chrono::steady_clock::time_point last_enobufs_log{};
 };
