@@ -127,7 +127,7 @@ public:
         return s;
     }
 
-    // Foot trajectory in hip frame
+    // Foot trajectory in hip frame — x-only + differential steering
     Vec3 gen_foot_hip(double t, const LegConfig& leg, const GaitCommand& cmd) const {
         Vec3 foot;
         foot.x = gait_.foot_center_x;
@@ -136,62 +136,61 @@ public:
 
         bool standing =
             std::abs(cmd.vx) < 0.05 &&
-            std::abs(cmd.vy) < 0.05 &&
             std::abs(cmd.wz) < 0.05;
 
         if (standing) {
             return foot;
         }
 
-        // Velocity in body frame, then subtract hip to get leg velocity
+        // Differential steering: vx_leg = vx - wz * y_hip
+        // Left leg (y>0): vx_leg = vx - wz*positive
+        // Right leg (y<0): vx_leg = vx + wz*positive
+        // Pure wz →左右腿前后速度相反 →差速转向
         double vx_leg = cmd.vx - cmd.wz * leg.hip_pos.y();
-        double vy_leg = cmd.vy + cmd.wz * leg.hip_pos.x();
 
         double stride_x = clamp(vx_leg * gait_.period * gait_.duty_factor * gait_.stride_scale,
-                                -gait_.max_stride, gait_.max_stride);
-        double stride_y = clamp(vy_leg * gait_.period * gait_.duty_factor * gait_.stride_scale,
                                 -gait_.max_stride, gait_.max_stride);
 
         double phase = std::fmod(t / gait_.period + leg.phase_offset, 1.0);
         if (phase < 0.0) phase += 1.0;
 
         if (phase < gait_.duty_factor) {
+            // Stance: foot moves backward relative to hip
             double s = phase / gait_.duty_factor;
             foot.x += stride_x * (0.5 - s);
-            foot.y += stride_y * (0.5 - s);
         } else {
+            // Swing: foot moves forward with smooth cycloid
             double s = (phase - gait_.duty_factor) / (1.0 - gait_.duty_factor);
             double c = s - std::sin(2.0 * PI * s) / (2.0 * PI);
             foot.x += stride_x * (-0.5 + c);
-            foot.y += stride_y * (-0.5 + c);
             foot.z += gait_.step_height * 0.5 * (1.0 - std::cos(2.0 * PI * s));
         }
+
+        foot.y = 0.0;  // 强制 y=0，不做 lateral 运动
         return foot;
     }
 
     // 3-DOF IK: foot_hip -> [q_abad, q_hip, q_knee]
-    // Out-of-workspace values are clamped to limits before solving
+    // x-z plane only, q_abad = 0 (no lateral motion)
     Eigen::Vector3d solve_ik(const Vec3& p_hip) const {
         double x = clamp(p_hip.x, x_min_, x_max_);
-        double y = clamp(p_hip.y, y_min_, y_max_);
         double z = clamp(p_hip.z, z_min_, z_max_);
 
-        
+        // q1: abduction = 0
+        double q1 = 0.0;
 
-        // q1: abduction
-        double q1 = std::atan2(y, -z);
+        // x-z 平面 IK
+        double r2 = x * x + z * z;
 
-        // Project into pitch plane
-        double z_plane = -std::sqrt(y * y + z * z);
-
-        // Knee
-        double r2 = x * x + z_plane * z_plane;
-        double cos_q3 = clamp((r2 - L2_ * L2_ - L3_ * L3_) / (2.0 * L2_ * L3_), -1.0, 1.0);
+        // Knee angle
+        double cos_q3 = clamp((r2 - L2_ * L2_ - L3_ * L3_) / (2.0 * L2_ * L3_),
+                              -1.0, 1.0);
         double q3 = std::acos(cos_q3);
 
-        // Hip
-        double alpha = std::atan2(x, -z_plane);
-        double beta  = std::atan2(L3_ * std::sin(q3), L2_ + L3_ * std::cos(q3));
+        // Hip pitch angle
+        double alpha = std::atan2(x, -z);
+        double beta  = std::atan2(L3_ * std::sin(q3),
+                                  L2_ + L3_ * std::cos(q3));
         double q2 = alpha - beta;
 
         return {q1, q2, q3};
