@@ -74,6 +74,10 @@ public:
             {"RH", {-0.16, -0.0675, 0.0}, 0.0},
         }};
 
+        // Yaw differential gain: virtual half-width for turning
+        // Real hip_pos.y() = 0.0675, too small for visible turning
+        yaw_vx_gain_ = 0.90;
+
         // Internal time: default start at 0.5s, dt=0.02 (50Hz)
         t_ = 0.5;
         dt_ = 0.02;
@@ -142,11 +146,11 @@ public:
             return foot;
         }
 
-        // Differential steering: vx_leg = vx - wz * y_hip
-        // Left leg (y>0): vx_leg = vx - wz*positive
-        // Right leg (y<0): vx_leg = vx + wz*positive
-        // Pure wz →左右腿前后速度相反 →差速转向
-        double vx_leg = cmd.vx - cmd.wz * leg.hip_pos.y();
+        // Differential steering: use virtual yaw_vx_gain_ instead of real hip_pos.y()
+        // Real hip_pos.y() = 0.0675 → stride too small to see turning
+        // yaw_vx_gain_ = 0.90 → pure wz=1 → ±0.90 m/s differential → 22.5cm stride
+        double side = (leg.hip_pos.y() > 0.0) ? 1.0 : -1.0;
+        double vx_leg = cmd.vx - yaw_vx_gain_ * cmd.wz * side;
 
         double stride_x = clamp(vx_leg * gait_.period * gait_.duty_factor * gait_.stride_scale,
                                 -gait_.max_stride, gait_.max_stride);
@@ -201,6 +205,8 @@ public:
     double L3() const { return L3_; }
     double stand_height() const { return stand_height_; }
     double time() const { return t_; }
+    double yaw_vx_gain() const { return yaw_vx_gain_; }
+    void set_yaw_vx_gain(double g) { yaw_vx_gain_ = g; }
     const Eigen::Matrix<double, 3, 4>& joint_offsets() const { return joint_offsets_; }
     const Eigen::Matrix<double, 3, 4>& joint_signs() const { return joint_signs_; }
     const LegConfig& leg(int i) const { return legs_[i]; }
@@ -213,6 +219,7 @@ public:
 private:
     double L2_, L3_;
     double stand_height_;
+    double yaw_vx_gain_;
     double x_min_, x_max_, y_min_, y_max_;
     double r_min_, r_max_, z_min_, z_max_;
     Eigen::Matrix<double, 3, 4> joint_offsets_;  // [abad,hip,knee] x [LF,RF,LH,RH]
