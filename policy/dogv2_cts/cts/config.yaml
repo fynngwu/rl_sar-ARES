@@ -26,7 +26,7 @@ dogv2_cts/cts:
 
   # PD gains (driver reads these at init)
   fixed_kp: 20
-  fixed_kd: 0.5
+  fixed_kd: 1.0
   torque_limits: 17
 
   # RMA (Running Moving Average) alpha for command smoothing
@@ -71,3 +71,32 @@ dogv2_cts/cts:
   record:
     enabled: false
     filepath: "records"
+
+  # Jump trajectory (RB+A from STAND)
+  # 极坐标定义跳跃: 每帧给 (θ, r)，程序自动算四条腿的电机位置
+  #   θ: 从竖直向下算, 正=前, 负=后 [度]
+  #   r: 足端到髋关节距离 [m]
+  #   x = r × sin(θ),  z = -r × cos(θ)
+  # 四条腿完全一致，无需重复定义
+  jump:
+    keyframes:
+      # 蓄力: 腿向前收 (θ=+30°, r=0.18)
+      - theta: 30
+        r: 0.18
+        duration: 0.80
+        mode: smooth
+      # 蹬地: 腿向后下蹬出 (θ=-30°, r=0.36)
+      - theta: -30
+        r: 0.36
+        duration: 0.06
+        mode: step
+      # 空中收腿: 腿向前收 (θ=+30°, r=0.18)
+      - theta: 30
+        r: 0.18
+        duration: 0.3
+        mode: smooth
+      # 恢复站立 (θ=0°, r=0.30)
+      - theta: 0
+        r: 0.30
+        duration: 0.80
+        mode: smooth

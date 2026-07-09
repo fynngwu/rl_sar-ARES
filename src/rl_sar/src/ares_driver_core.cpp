@@ -2,6 +2,7 @@
 #include "yaml_utils.hpp"
 
 #include "dog_driver.hpp"
+#include "jump_controller.hpp"
 #include "observations.hpp"
 #include "quadruped_leg_controller.hpp"
 
@@ -33,6 +34,8 @@ public:
         config_torque_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], NUM_JOINTS);
         gamepad_scale_ = rc["gamepad_scale"].as<float>();
         rma_alpha_ = LoadDoubleOrDefault(rc, "rma_alpha", 1.0);
+
+        jump_controller_.LoadFromYaml(policy_dir, policy_name);
 
         TryCreateDriver();
         CheckGamepadConnection();
@@ -115,23 +118,16 @@ public:
                 }
             }
         }
-        if (mode_.load() == DriverMode::GAIT &&
-            (now - last_stride_change_) >= std::chrono::milliseconds(200)) {
+        if ((now - last_speed_scale_change_) >= std::chrono::milliseconds(200)) {
             if (dpad_x > 0.5f) {
-                double old = stride_scale_value_;
-                stride_scale_value_ = std::min(stride_scale_max_, stride_scale_value_ + stride_scale_step_);
-                if (stride_scale_value_ != old) {
-                    printf("[GAMEPAD] DPad→ Stride: %.2f → %.2f\n", old, stride_scale_value_);
-                    last_stride_change_ = now;
-                }
+                speed_scale_x_ += 0.2f;
+                printf("[GAMEPAD] DPad→ Speed Scale X: %.2f\n", speed_scale_x_);
+                last_speed_scale_change_ = now;
             }
             if (dpad_x < -0.5f) {
-                double old = stride_scale_value_;
-                stride_scale_value_ = std::max(stride_scale_min_, stride_scale_value_ - stride_scale_step_);
-                if (stride_scale_value_ != old) {
-                    printf("[GAMEPAD] DPad← Stride: %.2f → %.2f\n", old, stride_scale_value_);
-                    last_stride_change_ = now;
-                }
+                speed_scale_x_ = std::max(0.2f, speed_scale_x_ - 0.2f);
+                printf("[GAMEPAD] DPad← Speed Scale X: %.2f\n", speed_scale_x_);
+                last_speed_scale_change_ = now;
             }
         }
 
@@ -144,7 +140,7 @@ public:
         float raw_y = -gamepad_->GetAxis(0);
         float raw_yaw = -gamepad_->GetAxis(3);
         float lateral_deadzone = (mode_.load() == DriverMode::GAIT) ? GAIT_LINEAR_Y_DEADZONE : 0.05f;
-        cmd.linear_x = apply_deadzone(raw_x) * gamepad_scale_;
+        cmd.linear_x = apply_deadzone(raw_x) * gamepad_scale_ * speed_scale_x_;
         cmd.linear_y = apply_deadzone(raw_y, lateral_deadzone) * gamepad_scale_;
         cmd.angular_z = apply_deadzone(raw_yaw) * gamepad_scale_;
         cmd.linear_z = height_value_;
@@ -313,6 +309,25 @@ public:
                 next_tick = std::chrono::steady_clock::now();
                 std::this_thread::sleep_for(LOOP_DT);
                 break;
+            case DriverMode::JUMP: {
+                if (jump_controller_.IsActive()) {
+                    auto target = jump_controller_.Update();
+                    {
+                        std::lock_guard<std::mutex> lock(driver_mutex_);
+                        if (driver_) driver_->SetAllJointPositions(target);
+                    }
+                    if (jump_controller_.IsDone()) {
+                        printf("[JUMP] Finished → STAND\n");
+                        jump_controller_.Reset();
+                        mode_ = DriverMode::STAND;
+                    }
+                }
+                next_tick += LOOP_DT;
+                std::this_thread::sleep_until(next_tick);
+                if (std::chrono::steady_clock::now() > next_tick + LOOP_DT)
+                    next_tick = std::chrono::steady_clock::now();
+                break;
+            }
             }
         }
     }
@@ -326,6 +341,7 @@ private:
         case DriverMode::RL:      return "RL";
         case DriverMode::DAMPING: return "DAMPING";
         case DriverMode::GAIT:    return "GAIT";
+        case DriverMode::JUMP:    return "JUMP";
         }
         return "???";
     }
@@ -550,6 +566,7 @@ private:
             printf("[MODE] → DISABLED\n");
             break;
         case DriverMode::STAND: {
+            speed_scale_x_ = 1.0f;
             SetDampingGains();
             driver_->EnableAll();
             std::this_thread::sleep_for(std::chrono::milliseconds(15));
@@ -578,6 +595,12 @@ private:
             gait_controller_.reset();
             printf("[MODE] → GAIT\n");
             break;
+        case DriverMode::JUMP:
+            ApplyMotorParams(true);
+            driver_->EnableAll();
+            jump_controller_.Reset();
+            printf("[MODE] → JUMP\n");
+            break;
         }
     }
 
@@ -599,6 +622,7 @@ private:
         bool lb_b     = lb && b;
         bool lb_y     = lb && y;
         bool lb_x     = lb && x;
+        bool rb_a     = rb && a;
 
         bool rb_x_edge     = rb_x     && !prev_rb_x_;
         bool lb_rb_edge    = lb_rb    && !prev_lb_rb_;
@@ -606,6 +630,7 @@ private:
         bool lb_b_edge     = lb_b     && !prev_lb_b_;
         bool lb_y_edge     = lb_y     && !prev_lb_y_;
         bool lb_x_edge     = lb_x     && !prev_lb_x_;
+        bool rb_a_edge     = rb_a     && !prev_rb_a_;
 
         prev_rb_x_     = rb_x;
         prev_lb_rb_    = lb_rb;
@@ -613,6 +638,7 @@ private:
         prev_lb_b_     = lb_b;
         prev_lb_y_     = lb_y;
         prev_lb_x_     = lb_x;
+        prev_rb_a_     = rb_a;
 
         if (rb_x_edge) {
             printf("[GAMEPAD] RB+X → DISABLE\n");
@@ -632,6 +658,11 @@ private:
             if (mode_.load() == DriverMode::STAND) {
                 printf("[GAMEPAD] LB+B → GAIT\n");
                 mode_ = DriverMode::GAIT;
+            }
+        } else if (rb_a_edge) {
+            if (mode_.load() == DriverMode::STAND) {
+                printf("[GAMEPAD] RB+A → JUMP\n");
+                mode_ = DriverMode::JUMP;
             }
         } else if (lb_x_edge) {
             bool old = auto_walk_enabled_.load();
@@ -668,18 +699,20 @@ private:
     static constexpr float HEIGHT_STEP = 0.03f;
     static constexpr float GAIT_LINEAR_Y_DEADZONE = 0.20f;
     float height_value_ = 0.0f;
+    float speed_scale_x_ = 1.0f;
     std::chrono::steady_clock::time_point last_height_change_{};
+    std::chrono::steady_clock::time_point last_speed_scale_change_{};
     GaitParams gait_params_;
     double stride_scale_value_ = 1.0;
     double stride_scale_min_ = 0.4;
     double stride_scale_max_ = 1.6;
     double stride_scale_step_ = 0.1;
-    std::chrono::steady_clock::time_point last_stride_change_{};
     bool gamepad_connected_logged_ = false;
     bool driver_connected_logged_ = false;
     std::chrono::steady_clock::time_point last_reconnect_{};
     bool prev_rb_x_ = false, prev_lb_rb_ = false;
     bool prev_lb_a_ = false, prev_lb_b_ = false, prev_lb_y_ = false, prev_lb_x_ = false;
+    bool prev_rb_a_ = false;
 
     mutable std::mutex auto_walk_mutex_;
     float auto_walk_linear_x_ = 0.0f;
@@ -690,6 +723,7 @@ private:
     std::chrono::steady_clock::time_point last_gait_print_{};
 
     QuadrupedLegController gait_controller_;
+    JumpController jump_controller_;
 };
 
 AresDriverCore::AresDriverCore(const std::string& policy_dir, const std::string& policy_name)
