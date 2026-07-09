@@ -193,6 +193,10 @@ int DogDriver::SetTorqueLimit(int joint_idx, float torque_limit) {
     return motor_controller_->SetMITParams(motor_indices_[joint_idx], params);
 }
 
+void DogDriver::SetRMAAlpha(float alpha) {
+    motor_controller_->SetRMAAlpha(alpha);
+}
+
 bool DogDriver::IsJointOnline(int joint_idx) const {
     if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return false;
     return motor_controller_->IsMotorOnline(motor_indices_[joint_idx]);

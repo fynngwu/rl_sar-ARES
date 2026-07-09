@@ -228,7 +228,18 @@ RobstrideController::RobstrideController() : running(false) {
                     float p_max = P_MAX;
                     float v_max = motor.motor_info.max_speed > 0 ? motor.motor_info.max_speed : V_MAX;
 
-                    uint16_t pos_uint = float_to_uint(motor.target_pos, -p_max, p_max, 16);
+                    float cmd_pos = motor.target_pos;
+                    if (rma_alpha_ > 0.0f && rma_alpha_ < 1.0f) {
+                        float error = std::abs(cmd_pos - motor.smoothed_pos);
+                        if (error > 0.5f) {
+                            printf("[Robstride] Motor %d RMA warning: error=%.3f > 0.5\n",
+                                   motor.motor_id, error);
+                        }
+                        motor.smoothed_pos = (1.0f - rma_alpha_) * motor.smoothed_pos + rma_alpha_ * cmd_pos;
+                        cmd_pos = motor.smoothed_pos;
+                    }
+
+                    uint16_t pos_uint = float_to_uint(cmd_pos, -p_max, p_max, 16);
                     uint16_t vel_uint = float_to_uint(motor.target_radps, -v_max, v_max, 16);
                     uint16_t kp_uint  = float_to_uint(motor.mit_params.kp, KP_MIN, KP_MAX, 16);
                     uint16_t kd_uint  = float_to_uint(motor.mit_params.kd, KD_MIN, KD_MAX, 16);
@@ -352,6 +363,15 @@ int RobstrideController::SendMITCommand(int motor_idx, float pos) {
         return 0;
     }
     return -1;
+}
+
+void RobstrideController::SetRMAAlpha(float alpha) {
+    rma_alpha_ = alpha;
+    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    for (auto& motor : motor_data) {
+        motor.smoothed_pos = motor.state.position;
+    }
+    printf("[Robstride] RMA alpha set to %.3f\n", rma_alpha_);
 }
 
 int RobstrideController::EnableMotor(int motor_idx) {

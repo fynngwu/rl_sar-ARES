@@ -151,6 +151,10 @@ public:
     // Set MIT torque limit for one joint (Nm). Returns 0 on success.
     int SetTorqueLimit(int joint_idx, float torque_limit);
 
+    // Set RMA (Running Moving Average) alpha for command smoothing.
+    // alpha: smoothing factor (0.0 = no smoothing, 1.0 = direct pass-through)
+    void SetRMAAlpha(float alpha);
+
     // --- Status queries ---
 
     // Returns true if motor has responded within the last 500ms.

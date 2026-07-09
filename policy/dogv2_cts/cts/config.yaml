@@ -29,6 +29,10 @@ dogv2_cts/cts:
   fixed_kd: 0.5
   torque_limits: 17
 
+  # RMA (Running Moving Average) alpha for command smoothing
+  # 0.0 = no smoothing (direct pass-through), 1.0 = fully smoothed
+  rma_alpha: 0.5
+
   # Position limits (driver order: HipA LF/LR/RF/RR, HipF LF/LR/RF/RR, Knee LF/LR/RF/RR)
   position_limits:
     # HipA

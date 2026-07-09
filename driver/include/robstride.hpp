@@ -41,6 +41,7 @@ public:
     int SetMITParams(int motor_idx, struct MIT_params mit_params);
     struct MIT_params GetMITParams(int motor_idx);
     int SendMITCommand(int motor_idx, float pos);
+    void SetRMAAlpha(float alpha);
     int EnableMotor(int motor_idx);
     int DisableMotor(int motor_idx);
     int ClearMotor(int motor_idx);
@@ -88,6 +89,7 @@ private:
         float target_pos = 0.0f;
         float target_radps = 0.0f;
         float target_torque = 0.0f;
+        float smoothed_pos = 0.0f;
         int missed_times = 0;
         uint8_t error_code = 0;
         uint8_t pattern = 0;
@@ -100,4 +102,5 @@ private:
     std::thread control_thread;
     std::atomic<bool> running;
     std::recursive_mutex motor_data_mutex;
+    float rma_alpha_ = 0.5f;
 };
