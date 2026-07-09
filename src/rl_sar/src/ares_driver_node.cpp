@@ -9,6 +9,7 @@
 #include "std_msgs/msg/u_int8.hpp"
 
 #include "ares_driver_core.hpp"
+#include "data_logger.hpp"
 
 #include <array>
 #include <chrono>
@@ -59,6 +60,10 @@ public:
             "/motor_param_update", 1,
             std::bind(&AresDriverNode::MotorParamCallback, this, std::placeholders::_1));
 
+        xbox_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+            "/xbox_vel", 10,
+            std::bind(&AresDriverNode::XboxVelCallback, this, std::placeholders::_1));
+
         feedback_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(10),
             std::bind(&AresDriverNode::FeedbackTimerCallback, this));
@@ -84,8 +89,10 @@ private:
             return;
 
         std::array<float, AresDriverCore::NUM_JOINTS> target;
-        for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i)
+        for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i) {
             target[i] = msg->position[i];
+            cmd_sent_[i] = msg->position[i];
+        }
         core_->SetTopicCommand(target);
     }
 
@@ -102,6 +109,15 @@ private:
             torque.assign(msg->effort.begin(), msg->effort.begin() + AresDriverCore::NUM_JOINTS);
         core_->SetMotorParams(kp, kd, torque);
         RCLCPP_INFO(this->get_logger(), "Motor params updated from /motor_param_update");
+    }
+
+    void XboxVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+    {
+        core_->SetTopicVelocity(
+            static_cast<float>(msg->linear.x),
+            static_cast<float>(msg->linear.y),
+            static_cast<float>(msg->angular.z),
+            static_cast<float>(msg->linear.z));
     }
 
     void FeedbackTimerCallback()
@@ -133,13 +149,28 @@ private:
         imu_pub_->publish(imu_msg);
 
         auto gamepad = core_->PollGamepad();
-        if (gamepad.connected) {
+        if (!core_->IsAutoWalkEnabled() && gamepad.connected) {
             geometry_msgs::msg::Twist twist;
             twist.linear.x = gamepad.linear_x;
             twist.linear.y = gamepad.linear_y;
             twist.linear.z = gamepad.linear_z;
             twist.angular.z = gamepad.angular_z;
             xbox_vel_pub_->publish(twist);
+        }
+
+        if (logger_.IsOpen()) {
+            LogSnapshot snap;
+            snap.timestamp_sec = this->now().seconds();
+            snap.motor_pos = joint_states.position;
+            snap.motor_vel = joint_states.velocity;
+            snap.motor_torque = joint_states.torque;
+            snap.motor_cmd = cmd_sent_;
+            snap.imu_gyro = imu_data.angular_velocity;
+            snap.imu_gravity = imu_data.projected_gravity;
+            snap.xbox_linear_x = gamepad.linear_x;
+            snap.xbox_linear_y = gamepad.linear_y;
+            snap.xbox_angular_z = gamepad.angular_z;
+            logger_.Log(snap);
         }
     }
 
@@ -151,6 +182,9 @@ private:
     }
 
     std::unique_ptr<AresDriverCore> core_;
+    DataLogger logger_;
+
+    std::array<float, AresDriverCore::NUM_JOINTS> cmd_sent_{};
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
@@ -158,6 +192,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr driver_mode_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_command_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_sub_;
     rclcpp::TimerBase::SharedPtr feedback_timer_;
 };
 

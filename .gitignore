@@ -1,6 +1,7 @@
 install/
 build/
 log/
+logs/
 *.so
 *.a
 .deps

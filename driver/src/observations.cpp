@@ -59,6 +59,11 @@ IMUComponent::~IMUComponent() {
     if (fd >= 0) {
         serial_close(fd);
     }
+    if (fd >= 0) {
+        WitDeInit();
+    }
+    fd = -1;
+
     if (instance_ == this) {
         instance_ = nullptr;
     }
@@ -121,6 +126,8 @@ static constexpr int kIMUBaud = 115200;
 void IMUComponent::AutoScanSensor() {
     char cBuff[1];
 
+    usleep(50000);
+
     s_iCurBaud = kIMUBaud;
     fd = serial_open((unsigned char*)dev_path, s_iCurBaud);
 
@@ -128,6 +135,8 @@ void IMUComponent::AutoScanSensor() {
         std::cerr << "Can not open IMU serial" << std::endl;
         return;
     }
+
+    usleep(10000);
 
     s_cDataUpdate = 0;
     WitReadReg(AX, 3);

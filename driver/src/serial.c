@@ -67,6 +67,8 @@ int serial_open(unsigned char* dev, unsigned int baud)
 
 void serial_close(int fd)
 {
+    if (fd < 0) return;
+    tcflush(fd, TCIOFLUSH);
     close(fd);
 }
 

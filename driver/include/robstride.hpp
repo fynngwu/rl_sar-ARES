@@ -102,5 +102,5 @@ private:
     std::thread control_thread;
     std::atomic<bool> running;
     std::recursive_mutex motor_data_mutex;
-    float rma_alpha_ = 0.5f;
+    float rma_alpha_ = 1.0f;
 };
