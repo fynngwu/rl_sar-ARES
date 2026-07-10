@@ -206,6 +206,18 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
     return true;
 }
 
+bool AresRL::SwitchPolicy(const std::string& policy_dir, const std::string& policy_name)
+{
+    std::lock_guard<std::mutex> lock(model_mutex_);
+
+    if (csv_file_.is_open())
+        csv_file_.close();
+    record_enabled_ = false;
+
+    printf("[RL] Switching policy: %s → %s\n", policy_name_.c_str(), policy_name.c_str());
+    return Init(policy_dir, policy_name);
+}
+
 void AresRL::RunModel(const float imu_gyro[3], const float imu_gravity[3],
                        const float* commands, int num_commands,
                        const float joint_pos[12],
@@ -213,6 +225,8 @@ void AresRL::RunModel(const float imu_gyro[3], const float imu_gravity[3],
 {
     if (current_state_ == State::STOPPED || !rl_init_done_)
         return;
+
+    std::lock_guard<std::mutex> lock(model_mutex_);
 
     obs_.ang_vel     = {imu_gyro[0], imu_gyro[1], imu_gyro[2]};
     obs_.gravity_vec = {imu_gravity[0], imu_gravity[1], imu_gravity[2]};

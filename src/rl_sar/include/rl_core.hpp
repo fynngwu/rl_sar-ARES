@@ -4,6 +4,7 @@
 #include <array>
 #include <string>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <chrono>
 #include <fstream>
@@ -20,6 +21,7 @@ public:
     ~AresRL();
 
     bool Init(const std::string& policy_dir, const std::string& policy_name);
+    bool SwitchPolicy(const std::string& policy_dir, const std::string& policy_name);
 
     void RunModel(const float imu_gyro[3], const float imu_gravity[3],
                   const float* commands, int num_commands,
@@ -107,4 +109,6 @@ private:
     std::ofstream csv_file_;
 
     std::vector<float> snap_joint_pos_, snap_joint_vel_, snap_joint_torque_;
+
+    std::mutex model_mutex_;
 };

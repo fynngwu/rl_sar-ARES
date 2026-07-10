@@ -53,7 +53,7 @@ int main(int argc, char** argv)
     PRINTLN("Policy: %s", policy_name);
     PRINTLN("");
 
-    AresDriverCore core(std::string(POLICY_DIR), policy_name);
+    AresDriverCore core(std::string(POLICY_DIR));
     PRINTLN("Driver created.");
 
     // --- Check IMU connection ---

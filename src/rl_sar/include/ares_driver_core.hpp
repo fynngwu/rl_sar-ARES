@@ -3,6 +3,7 @@
 #include "driver_mode.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -32,7 +33,7 @@ public:
         float stride_scale = 1.0f;
     };
 
-    AresDriverCore(const std::string& policy_dir, const std::string& policy_name);
+    AresDriverCore(const std::string& policy_dir);
     ~AresDriverCore();
 
     AresDriverCore(const AresDriverCore&) = delete;
@@ -58,6 +59,8 @@ public:
     bool imu_connected() const;
     bool gamepad_connected() const;
     std::string gamepad_name() const;
+
+    int ConsumeCycleDirection();
 
 private:
     class Impl;

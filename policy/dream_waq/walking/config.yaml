@@ -1,22 +1,21 @@
-# DogV2 CTS — ARES deployment config (RL + driver parameters)
-# CTS policy joint order (= topic order): FL FR RL RR (per leg: hip, thigh, calf)
-# Driver internal order: HipA(LF,LR,RF,RR) HipF(LF,LR,RF,RR) Knee(LF,LR,RF,RR)
-dogv2_cts/cts:
+# DreamWaQ policy — Walking variant
+# Optimized for smooth locomotion on flat/rough terrain
+dream_waq/walking:
   # Model
   model_name: "policy.onnx"
   num_observations: 45
-  observations: ["ang_vel", "gravity_vec", "commands", "dof_pos", "dof_vel", "actions"]
+  observations: ["commands", "ang_vel", "gravity_vec", "dof_pos", "dof_vel", "actions"]
   observations_history: [4, 3, 2, 1, 0]
   observations_history_priority: "time"
   clip_obs: 100.0
-  clip_actions_lower: [-10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10]
-  clip_actions_upper: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+  clip_actions_lower: [-100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100]
+  clip_actions_upper: [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
 
   # Control
   dt: 0.005
   decimation: 4
   num_of_dofs: 12
-  action_scale: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]
+  action_scale: 0.18
   commands_scale: [2.0, 2.0, 0.25]
   lin_vel_scale: 2.0
   ang_vel_scale: 0.25
@@ -24,12 +23,12 @@ dogv2_cts/cts:
   dof_vel_scale: 0.05
   gravity_vec_scale: 1.0
 
-  # PD gains (driver reads these at init)
-  fixed_kp: 20
+  # PD gains
+  fixed_kp: 24
   fixed_kd: 1.0
   torque_limits: 17
 
-  # Position limits (driver order: HipA LF/LR/RF/RR, HipF LF/LR/RF/RR, Knee LF/LR/RF/RR)
+  # Position limits
   position_limits:
     # HipA
     - [-0.7853982,  0.7853982]
@@ -53,17 +52,14 @@ dogv2_cts/cts:
   # Driver config
   gamepad_scale: 1.0
   gamepad_limits:
-    linear_x: [-2.0, 2.0]
-    linear_y: [-1.0, 1.0]
+    linear_x: [-1.2, 1.2]
+    linear_y: [-0.8, 0.8]
     angular_z: [-1.5, 1.5]
 
-  # Joint mapping: topic_to_driver[topic_idx] = driver_idx
-  # Topic order (CTS policy): FL FR RL RR, by leg
-  # Driver internal order: HipA(LF,LR,RF,RR) HipF(LF,LR,RF,RR) Knee(LF,LR,RF,RR)
+  # Joint mapping
   topic_to_driver: [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
 
-  # Recording (press L to start/stop)
+  # Recording
   record:
     enabled: false
     filepath: "records"
-

@@ -48,7 +48,7 @@ cleanup() {
 
 trap 'cleanup; exit 0' SIGINT SIGTERM
 
-"$BIN_DIR/ares_driver_node" "$POLICY" &
+"$BIN_DIR/ares_driver_node" &
 PID_DRIVER=$!
 
 "$BIN_DIR/ares" "$POLICY" &

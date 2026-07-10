@@ -7,6 +7,7 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "std_msgs/msg/u_int8.hpp"
+#include "std_msgs/msg/int8.hpp"
 
 #include "ares_driver_core.hpp"
 #include "data_logger.hpp"
@@ -31,9 +32,9 @@ static constexpr const char* kJointNames[AresDriverCore::NUM_JOINTS] = {
 class AresDriverNode : public rclcpp::Node
 {
 public:
-    explicit AresDriverNode(const std::string& policy_name)
+    AresDriverNode()
         : Node("ares_driver_node"),
-          core_(std::make_unique<AresDriverCore>(std::string(POLICY_DIR), policy_name))
+          core_(std::make_unique<AresDriverCore>(std::string(POLICY_DIR)))
     {
         RCLCPP_INFO(this->get_logger(), "Initializing ARES Driver Node...");
         RCLCPP_INFO(this->get_logger(), "  kp: %s", FmtFloatVec(core_->config_kp()).c_str());
@@ -51,6 +52,7 @@ public:
         imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("/imu/data", 10);
         xbox_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/xbox_vel", 10);
         driver_mode_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/driver_mode", 10);
+        policy_cycle_pub_ = this->create_publisher<std_msgs::msg::Int8>("/policy_cycle", 10);
 
         motor_command_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
             "/motor_command", 10,
@@ -124,6 +126,13 @@ private:
     {
         PublishDriverMode();
 
+        int cycle_dir = core_->ConsumeCycleDirection();
+        if (cycle_dir != 0) {
+            std_msgs::msg::Int8 msg;
+            msg.data = static_cast<int8_t>(cycle_dir);
+            policy_cycle_pub_->publish(msg);
+        }
+
         auto joint_states = core_->GetTopicFeedback();
         sensor_msgs::msg::JointState feedback_msg;
         feedback_msg.header.stamp = this->now();
@@ -190,6 +199,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr driver_mode_pub_;
+    rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr policy_cycle_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_command_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_sub_;
@@ -201,10 +211,9 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     rclcpp::init(argc, argv);
-    std::string policy_name = (argc > 1) ? argv[1] : "dogv2_cts/cts";
-    RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node (policy: %s)...", policy_name.c_str());
+    RCLCPP_INFO(rclcpp::get_logger("main"), "Starting ARES Driver Node...");
 
-    auto node = std::make_shared<AresDriverNode>(policy_name);
+    auto node = std::make_shared<AresDriverNode>();
 
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(node);

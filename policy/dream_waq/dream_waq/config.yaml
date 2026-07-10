@@ -16,7 +16,7 @@ dream_waq/dream_waq:
   decimation: 4
   num_of_dofs: 12
   action_scale: 0.18
-  commands_scale: [2.0, 2.0, 0.25, 10.0]
+  commands_scale: [2.0, 2.0, 0.25]
   lin_vel_scale: 2.0
   ang_vel_scale: 0.25
   dof_pos_scale: 1.0
@@ -24,11 +24,9 @@ dream_waq/dream_waq:
   gravity_vec_scale: 1.0
 
   # PD gains (driver reads these at init)
-  fixed_kp: 15
-  fixed_kd: 0.5
-  torque_limits: [17.0, 17.0, 17.0, 17.0,
-                  17.0, 17.0, 17.0, 17.0,
-                  25.0, 25.0, 25.0, 25.0]
+  fixed_kp: 24
+  fixed_kd: 1.0
+  torque_limits: 17
 
   # Position limits (driver order: HipA LF/LR/RF/RR, HipF LF/LR/RF/RR, Knee LF/LR/RF/RR)
   position_limits:
@@ -52,12 +50,11 @@ dream_waq/dream_waq:
   default_dof_pos: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
   # Driver config
-  gamepad_scale: 2.0
+  gamepad_scale: 1.0
   gamepad_limits:
-    linear_x: [-2.0, 2.0]
-    linear_y: [-2.0, 2.0]
-    angular_z: [-0.5, 0.5]
-    height: [-0.1, 0.0]
+    linear_x: [-1.0, 1.0]
+    linear_y: [-0.8, 0.8]
+    angular_z: [-1.5, 1.5]
 
   # Joint mapping: topic_to_driver[topic_idx] = driver_idx
   # Topic order (model is LeggedGym default FL FR RL RR): FL FR RL RR, by leg

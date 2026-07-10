@@ -21,21 +21,14 @@
 
 class AresDriverCore::Impl {
 public:
-    explicit Impl(const std::string& policy_dir, const std::string& policy_name)
+    explicit Impl(const std::string& policy_dir)
         : policy_dir_(policy_dir), running_(true)
     {
-        std::string config_path = policy_dir + "/" + policy_name + "/config.yaml";
-        YAML::Node rc = YAML::LoadFile(config_path)[policy_name];
-        if (!rc)
-            throw std::runtime_error("Missing '" + policy_name + "' in " + config_path);
+        LoadPositionControlPid();
 
-        config_kp_ = yaml_utils::LoadScalarOrArray(rc["fixed_kp"], NUM_JOINTS);
-        config_kd_ = yaml_utils::LoadScalarOrArray(rc["fixed_kd"], NUM_JOINTS);
-        config_torque_ = yaml_utils::LoadScalarOrArray(rc["torque_limits"], NUM_JOINTS);
-        gamepad_scale_ = rc["gamepad_scale"].as<float>();
-        rma_alpha_ = LoadDoubleOrDefault(rc, "rma_alpha", 1.0);
+        gamepad_scale_ = 1.0f;
 
-        jump_controller_.LoadFromYaml(policy_dir, policy_name);
+        jump_controller_.LoadFromYaml(policy_dir, "position_control");
 
         TryCreateDriver();
         CheckGamepadConnection();
@@ -181,6 +174,11 @@ public:
     const std::vector<float>& config_kp_val() const { return config_kp_; }
     const std::vector<float>& config_kd_val() const { return config_kd_; }
     const std::vector<float>& config_torque_val() const { return config_torque_; }
+
+    int ConsumeCycleDirection()
+    {
+        return policy_cycle_pending_.exchange(0);
+    }
 
     bool imu_connected() const
     {
@@ -476,8 +474,7 @@ private:
     {
         try {
             driver_ = std::make_unique<DogDriver>();
-            driver_->SetRMAAlpha(static_cast<float>(rma_alpha_));
-            printf("[DRIVER] DogDriver initialized (rma_alpha=%.3f)\n", rma_alpha_);
+            printf("[DRIVER] DogDriver initialized\n");
         } catch (const std::exception& e) {
             printf("[DRIVER] Init failed: %s\n", e.what());
             driver_.reset();
@@ -623,6 +620,8 @@ private:
         bool lb_y     = lb && y;
         bool lb_x     = lb && x;
         bool rb_a     = rb && a;
+        bool rb_b     = rb && b;
+        bool rb_y     = rb && y;
 
         bool rb_x_edge     = rb_x     && !prev_rb_x_;
         bool lb_rb_edge    = lb_rb    && !prev_lb_rb_;
@@ -631,6 +630,8 @@ private:
         bool lb_y_edge     = lb_y     && !prev_lb_y_;
         bool lb_x_edge     = lb_x     && !prev_lb_x_;
         bool rb_a_edge     = rb_a     && !prev_rb_a_;
+        bool rb_b_edge     = rb_b     && !prev_rb_b_;
+        bool rb_y_edge     = rb_y     && !prev_rb_y_;
 
         prev_rb_x_     = rb_x;
         prev_lb_rb_    = lb_rb;
@@ -639,6 +640,8 @@ private:
         prev_lb_y_     = lb_y;
         prev_lb_x_     = lb_x;
         prev_rb_a_     = rb_a;
+        prev_rb_b_     = rb_b;
+        prev_rb_y_     = rb_y;
 
         if (rb_x_edge) {
             printf("[GAMEPAD] RB+X → DISABLE\n");
@@ -668,7 +671,40 @@ private:
             bool old = auto_walk_enabled_.load();
             auto_walk_enabled_.store(!old);
             printf("[GAMEPAD] LB+X → AUTO-WALK: %s\n", !old ? "TOPIC" : "GAMEPAD");
+        } else if (rb_b_edge) {
+            CyclePolicy(+1);
+        } else if (rb_y_edge) {
+            CyclePolicy(-1);
         }
+    }
+
+    void LoadPositionControlPid()
+    {
+        std::string path = policy_dir_ + "/position_control/config.yaml";
+        try {
+            YAML::Node root = YAML::LoadFile(path);
+            YAML::Node pc = root["position_control"];
+            YAML::Node joints = pc["joints"];
+            JointPid hip  = LoadJointPid(joints, "hip");
+            JointPid thigh = LoadJointPid(joints, "thigh");
+            JointPid knee  = LoadJointPid(joints, "knee");
+            config_kp_.resize(NUM_JOINTS);
+            config_kd_.resize(NUM_JOINTS);
+            for (int i = 0; i < 4; ++i) { config_kp_[i] = hip.kp;    config_kd_[i] = hip.kd; }
+            for (int i = 4; i < 8; ++i) { config_kp_[i] = thigh.kp;  config_kd_[i] = thigh.kd; }
+            for (int i = 8; i < 12; ++i) { config_kp_[i] = knee.kp;  config_kd_[i] = knee.kd; }
+            printf("[DRIVER] Loaded position_control PID\n");
+        } catch (const std::exception& e) {
+            printf("[DRIVER] Failed to load position_control PID: %s\n", e.what());
+            config_kp_.assign(NUM_JOINTS, 40.0f);
+            config_kd_.assign(NUM_JOINTS, 2.0f);
+        }
+    }
+
+    void CyclePolicy(int direction)
+    {
+        policy_cycle_pending_.store(direction);
+        printf("[GAMEPAD] Policy cycle: %s\n", direction > 0 ? "next" : "prev");
     }
 
     // --- State ---
@@ -693,7 +729,6 @@ private:
     std::vector<float> config_kd_;
     std::vector<float> config_torque_;
     float gamepad_scale_ = 0.0f;
-    float rma_alpha_ = 1.0f;
     static constexpr float HEIGHT_MIN = -0.15f;
     static constexpr float HEIGHT_MAX = 0.05f;
     static constexpr float HEIGHT_STEP = 0.03f;
@@ -713,6 +748,9 @@ private:
     bool prev_rb_x_ = false, prev_lb_rb_ = false;
     bool prev_lb_a_ = false, prev_lb_b_ = false, prev_lb_y_ = false, prev_lb_x_ = false;
     bool prev_rb_a_ = false;
+    bool prev_rb_b_ = false, prev_rb_y_ = false;
+
+    std::atomic<int> policy_cycle_pending_{0};
 
     mutable std::mutex auto_walk_mutex_;
     float auto_walk_linear_x_ = 0.0f;
@@ -726,8 +764,8 @@ private:
     JumpController jump_controller_;
 };
 
-AresDriverCore::AresDriverCore(const std::string& policy_dir, const std::string& policy_name)
-    : impl_(std::make_unique<Impl>(policy_dir, policy_name))
+AresDriverCore::AresDriverCore(const std::string& policy_dir)
+    : impl_(std::make_unique<Impl>(policy_dir))
 {
 }
 
@@ -812,4 +850,9 @@ bool AresDriverCore::gamepad_connected() const
 std::string AresDriverCore::gamepad_name() const
 {
     return impl_->gamepad_name();
+}
+
+int AresDriverCore::ConsumeCycleDirection()
+{
+    return impl_->ConsumeCycleDirection();
 }

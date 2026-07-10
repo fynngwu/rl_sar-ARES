@@ -3,6 +3,7 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "std_msgs/msg/u_int8.hpp"
+#include "std_msgs/msg/int8.hpp"
 
 #include "rl_core.hpp"
 #include "loop.hpp"
@@ -17,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 using Lock = std::lock_guard<std::mutex>;
 
@@ -39,8 +41,12 @@ public:
             "/imu/data", 10, std::bind(&AresRLNode::ImuCallback, this, _1));
         xbox_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
             "/xbox_vel", 10, std::bind(&AresRLNode::XboxVelCallback, this, _1));
+        policy_cycle_sub_ = create_subscription<std_msgs::msg::Int8>(
+            "/policy_cycle", 10, std::bind(&AresRLNode::PolicyCycleCallback, this, _1));
 
+        LoadPoliciesList();
         selected_policy_ = policy_name.empty() ? "dogv2_cts/cts" : policy_name;
+        current_policy_index_ = FindPolicyIndex(selected_policy_);
 
         if (!InitRL(selected_policy_)) {
             RCLCPP_FATAL(get_logger(), "RL init failed for %s — aborting", selected_policy_.c_str());
@@ -65,6 +71,43 @@ public:
     }
 
 private:
+    // 从 policies.yaml 加载可用策略列表，支持 gamepad SELECT_LOCOMOTION 切换
+    void LoadPoliciesList()
+    {
+        available_policies_.clear();
+        // 拼接路径: POLICY_DIR/policies.yaml (编译时定义 POLICY_DIR)
+        std::string path = std::string(POLICY_DIR) + "/policies.yaml";
+        try {
+            YAML::Node root = YAML::LoadFile(path);
+            // 遍历 YAML key-value，value 是策略子目录名 (如 "dogv2_cts/cts")
+            for (const auto& kv : root) {
+                std::string name = kv.second.as<std::string>();
+                available_policies_.push_back(name);
+            }
+        } catch (...) {
+            RCLCPP_FATAL(get_logger(), "Failed to load %s, aborting", path.c_str());
+            rclcpp::shutdown();
+            std::exit(1);
+        }
+        if (available_policies_.empty()) {
+            RCLCPP_FATAL(get_logger(), "policies.yaml is empty, aborting");
+            rclcpp::shutdown();
+            std::exit(1);
+        }
+        // 打印加载结果，便于调试
+        RCLCPP_INFO(get_logger(), "Available policies (%zu):", available_policies_.size());
+        for (size_t i = 0; i < available_policies_.size(); ++i)
+            RCLCPP_INFO(get_logger(), "  [%zu] %s", i, available_policies_[i].c_str());
+    }
+
+    // 根据策略名查找其在 available_policies_ 中的索引，未找到返回 0（第一个策略）
+    int FindPolicyIndex(const std::string& name)
+    {
+        for (size_t i = 0; i < available_policies_.size(); ++i)
+            if (available_policies_[i] == name) return static_cast<int>(i);
+        return 0;
+    }
+
     bool InitRL(const std::string& policy_name)
     {
         if (!rl_.Init(std::string(POLICY_DIR), policy_name))
@@ -230,6 +273,29 @@ private:
         if (n > 3) commands_buffer_[3] = std::clamp(static_cast<float>(msg->linear.z), limits[3].first, limits[3].second);
     }
 
+    void PolicyCycleCallback(const std_msgs::msg::Int8::SharedPtr msg)
+    {
+        int direction = msg->data;
+        if (direction == 0) return;
+
+        int n = static_cast<int>(available_policies_.size());
+        current_policy_index_ = (current_policy_index_ + direction + n) % n;
+        std::string new_policy = available_policies_[current_policy_index_];
+
+        if (new_policy == selected_policy_) return;
+
+        RCLCPP_INFO(get_logger(), "Policy → %s (%d/%d)", new_policy.c_str(), current_policy_index_ + 1, n);
+
+        if (!rl_.SwitchPolicy(std::string(POLICY_DIR), new_policy)) {
+            RCLCPP_ERROR(get_logger(), "Policy switch failed for %s", new_policy.c_str());
+            return;
+        }
+
+        selected_policy_ = new_policy;
+        PublishMotorParams();
+        RCLCPP_INFO(get_logger(), "Policy switched to %s", selected_policy_.c_str());
+    }
+
     AresRL rl_;
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_command_pub_, motor_param_pub_;
@@ -237,6 +303,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_sub_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_sub_;
+    rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr policy_cycle_sub_;
     std::shared_ptr<LoopFunc> loop_control_, loop_rl_;
 
     std::mutex data_mutex_, output_mutex_;
@@ -251,6 +318,8 @@ private:
     DriverMode driver_mode_{DriverMode::DISABLE};
     std::optional<rclcpp::Time> last_sensor_warn_;
 
+    std::vector<std::string> available_policies_;
+    int current_policy_index_{0};
     std::string selected_policy_{"dogv2_cts/cts"};
 };
 
