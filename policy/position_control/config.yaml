@@ -81,57 +81,30 @@ position_control:
       LH: {x: -0.05, y: 0.0, z: -0.30}
       RH: {x: -0.05, y: 0.0, z: -0.30}
     phases:
-      # 0) Preload: crouch before takeoff, keeping all feet on the ground.
+      # 0) Preload: crouch and store energy before the forward jump.
       - name: preload
         duration: 0.35
         mode: smooth
         feet:
-          LF: {x: -0.03, y: 0.0, z: -0.24}
-          RF: {x: -0.03, y: 0.0, z: -0.24}
-          LH: {x: -0.10, y: 0.0, z: -0.24}
-          RH: {x: -0.10, y: 0.0, z: -0.24}
-      # 1) Takeoff: rear legs extend quickly while front legs lift onto the wall/top edge.
-      - name: front_legs_on_wall_takeoff
-        duration: 0.22
-        mode: smooth
+          LF: {x: -0.04, y: 0.0, z: -0.23}
+          RF: {x: -0.04, y: 0.0, z: -0.23}
+          LH: {x: -0.10, y: 0.0, z: -0.23}
+          RH: {x: -0.10, y: 0.0, z: -0.23}
+      # 1) Takeoff: hard step, rear legs kick down/back and front legs swing forward/up.
+      - name: forward_takeoff_step
+        duration: 0.12
+        mode: step
         feet:
-          LF: {x: 0.14, y: 0.0, z: -0.15}
-          RF: {x: 0.14, y: 0.0, z: -0.15}
+          LF: {x: 0.15, y: 0.0, z: -0.15}
+          RF: {x: 0.15, y: 0.0, z: -0.15}
           LH: {x: -0.15, y: 0.0, z: -0.35}
           RH: {x: -0.15, y: 0.0, z: -0.35}
-      # 2) Catch: keep front feet high/forward briefly so they can hook/support on the wall.
-      - name: front_wall_catch
-        duration: 0.25
-        mode: smooth
+      # 2) Air tuck: quickly retract front legs while the body is moving forward.
+      - name: air_front_tuck
+        duration: 0.16
+        mode: step
         feet:
-          LF: {x: 0.14, y: 0.0, z: -0.15}
-          RF: {x: 0.14, y: 0.0, z: -0.15}
-          LH: {x: -0.06, y: 0.0, z: -0.28}
-          RH: {x: -0.06, y: 0.0, z: -0.28}
-      # 3) Rear push + front landing: rear legs kick from the ground while front legs reach down to the far side.
-      - name: rear_push_front_land
-        duration: 0.35
-        mode: smooth
-        feet:
-          LF: {x: 0.15, y: 0.0, z: -0.35}
-          RF: {x: 0.15, y: 0.0, z: -0.35}
-          LH: {x: -0.15, y: 0.0, z: -0.35}
-          RH: {x: -0.15, y: 0.0, z: -0.35}
-      # 4) Rear legs tuck over the wall after the front feet have landed.
-      - name: rear_legs_tuck
-        duration: 0.65
-        mode: smooth
-        feet:
-          LF: {x: -0.02, y: 0.0, z: -0.30}
-          RF: {x: -0.02, y: 0.0, z: -0.30}
-          LH: {x: 0.12, y: 0.0, z: -0.15}
-          RH: {x: 0.12, y: 0.0, z: -0.15}
-      # 5) Rear legs land and recover neutral stand.
-      - name: rear_legs_land
-        duration: 0.85
-        mode: smooth
-        feet:
-          LF: {x: -0.05, y: 0.0, z: -0.30}
-          RF: {x: -0.05, y: 0.0, z: -0.30}
-          LH: {x: -0.05, y: 0.0, z: -0.30}
-          RH: {x: -0.05, y: 0.0, z: -0.30}
+          LF: {x: -0.08, y: 0.0, z: -0.15}
+          RF: {x: -0.08, y: 0.0, z: -0.15}
+          LH: {x: -0.10, y: 0.0, z: -0.30}
+          RH: {x: -0.10, y: 0.0, z: -0.30}
