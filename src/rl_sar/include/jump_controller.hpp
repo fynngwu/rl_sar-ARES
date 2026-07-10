@@ -38,10 +38,16 @@ public:
     // YAML 格式:
     //   jump:
     //     keyframes:
-    //       - theta: -30       # 角度 [度], 竖直向下=0°, 正=前, 负=后
-    //         r: 0.18          # 足端到髋距离 [m]
+    //       - theta: -30       # 角度 [度], 竖直向下=0°, 正=前, 负=后 (四腿统一)
+    //         r: 0.18          # 足端到髋距离 [m] (四腿统一)
     //         duration: 0.10   # 该阶段持续时间 [s]
     //         mode: smooth     # smooth=平滑插值, step=瞬跳
+    //       - theta_front: 20  # 前腿(FL,FR)角度, 可选, 不设则用 theta
+    //         theta_rear: -30  # 后腿(RL,RR)角度, 可选, 不设则用 theta
+    //         r_front: 0.15    # 前腿距离, 可选, 不设则用 r
+    //         r_rear: 0.20     # 后腿距离, 可选, 不设则用 r
+    //         duration: 0.10
+    //         mode: smooth
     //
     // 返回 true = 加载成功
     //
@@ -56,20 +62,38 @@ public:
             }
 
             // ---- 读取极坐标关键帧 ----
-            struct PolarKF { double theta, r, dur; bool smooth; };
+            struct PolarKF { double theta_front, theta_rear, r_front, r_rear, dur; bool smooth; };
             std::vector<PolarKF> pks;
-            for (const auto& kf : root["keyframes"])
-                pks.push_back({kf["theta"].as<double>(), kf["r"].as<double>(),
+            for (const auto& kf : root["keyframes"]) {
+                double theta = kf["theta"].as<double>(0.0);
+                double tf = kf["theta_front"].as<double>(theta);
+                double tr = kf["theta_rear"].as<double>(theta);
+                double r = kf["r"].as<double>(0.18);
+                double rf = kf["r_front"].as<double>(r);
+                double rr = kf["r_rear"].as<double>(r);
+                pks.push_back({tf, tr, rf, rr,
                                kf["duration"].as<double>(),
                                kf["mode"].as<std::string>() == "smooth"});
+            }
 
             // ---- 极坐标 → 笛卡尔 → IK → 12个电机位置 ----
-            auto polar_to_motors = [&](double theta_deg, double r) {
-                double rad = theta_deg * M_PI / 180.0;
-                Vec3 foot = {r * std::sin(rad), 0.0, -r * std::cos(rad)};
+            // 前腿(FL=0, FR=2) 和 后腿(RL=1, RR=3) 分别用不同角度和距离
+            auto polar_to_motors = [&](double theta_front_deg, double theta_rear_deg,
+                                       double r_front, double r_rear) {
                 std::array<float, NUM_JOINTS> m{};
-                for (int leg = 0; leg < 4; ++leg) {
-                    auto q = leg_ctrl_.to_motor_angles(leg, leg_ctrl_.solve_ik(foot));
+                // 前腿 LF(0), RF(1)
+                double rad_f = theta_front_deg * M_PI / 180.0;
+                Vec3 foot_f = {r_front * std::sin(rad_f), 0.0, -r_front * std::cos(rad_f)};
+                for (int leg : {0, 1}) {
+                    auto q = leg_ctrl_.to_motor_angles(leg, leg_ctrl_.solve_ik(foot_f));
+                    for (int j = 0; j < 3; ++j)
+                        m[MOTOR_IDX[leg][j]] = (float)q(j);
+                }
+                // 后腿 LH(2), RH(3)
+                double rad_r = theta_rear_deg * M_PI / 180.0;
+                Vec3 foot_r = {r_rear * std::sin(rad_r), 0.0, -r_rear * std::cos(rad_r)};
+                for (int leg : {2, 3}) {
+                    auto q = leg_ctrl_.to_motor_angles(leg, leg_ctrl_.solve_ik(foot_r));
                     for (int j = 0; j < 3; ++j)
                         m[MOTOR_IDX[leg][j]] = (float)q(j);
                 }
@@ -84,12 +108,15 @@ public:
             double t = 0.0;
             double dt = 0.02;
             for (size_t i = 0; i < pks.size(); ++i) {
-                auto cur = polar_to_motors(pks[i].theta, pks[i].r);
+                auto cur = polar_to_motors(pks[i].theta_front, pks[i].theta_rear,
+                                           pks[i].r_front, pks[i].r_rear);
                 int n = std::max(1, (int)(pks[i].dur / dt));
                 for (int s = 0; s < n; ++s) {
                     float a = pks[i].smooth ? (float)s / n : 1.0f;
-                    auto prev = polar_to_motors(pks[i > 0 ? i - 1 : i].theta,
-                                                pks[i > 0 ? i - 1 : i].r);
+                    auto prev = polar_to_motors(pks[i > 0 ? i - 1 : i].theta_front,
+                                                pks[i > 0 ? i - 1 : i].theta_rear,
+                                                pks[i > 0 ? i - 1 : i].r_front,
+                                                pks[i > 0 ? i - 1 : i].r_rear);
                     Point p;
                     for (int j = 0; j < NUM_JOINTS; ++j)
                         p.pos[j] = prev[j] + (cur[j] - prev[j]) * a;
@@ -98,7 +125,8 @@ public:
                 t += pks[i].dur;
             }
             // 追加终点
-            Point ep; ep.pos = polar_to_motors(pks.back().theta, pks.back().r);
+            Point ep; ep.pos = polar_to_motors(pks.back().theta_front, pks.back().theta_rear,
+                                               pks.back().r_front, pks.back().r_rear);
             points_.push_back(ep);
             printf("[JUMP] %zu keyframes → %zu points (%.3fs)\n",
                    pks.size(), points_.size(), t);

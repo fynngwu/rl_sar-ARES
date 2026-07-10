@@ -62,9 +62,11 @@ position_control:
         r: 0.4
         duration: 0.1
         mode: step
-      # 空中收腿: 腿向前收 
-      - theta: -30
-        r: 0.18
+      # 空中收腿/落地: 前腿向前(+30), 后腿向后(-10)
+      - theta_front: 30
+        theta_rear: -10
+        r_front: 0.2
+        r_rear: 0.14
         duration: 0.1
         mode: smooth
 
