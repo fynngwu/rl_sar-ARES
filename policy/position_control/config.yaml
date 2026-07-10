@@ -86,25 +86,25 @@ position_control:
         duration: 0.35
         mode: smooth
         feet:
-          LF: {x: -0.04, y: 0.0, z: -0.23}
-          RF: {x: -0.04, y: 0.0, z: -0.23}
-          LH: {x: -0.10, y: 0.0, z: -0.23}
-          RH: {x: -0.10, y: 0.0, z: -0.23}
+          LF: {x: -0.05, y: 0.0, z: -0.15}
+          RF: {x: -0.05, y: 0.0, z: -0.15}
+          LH: {x: -0.05, y: 0.0, z: -0.15}
+          RH: {x: -0.05, y: 0.0, z: -0.15}
       # 1) Takeoff: hard step, rear legs kick down/back and front legs swing forward/up.
       - name: forward_takeoff_step
-        duration: 0.12
+        duration: 0.1
         mode: step
         feet:
-          LF: {x: 0.15, y: 0.0, z: -0.15}
-          RF: {x: 0.15, y: 0.0, z: -0.15}
-          LH: {x: -0.15, y: 0.0, z: -0.35}
-          RH: {x: -0.15, y: 0.0, z: -0.35}
+          LF: {x: -0.15, y: 0.0, z: -0.4}
+          RF: {x: -0.15, y: 0.0, z: -0.4}
+          LH: {x: -0.15, y: 0.0, z: -0.4}
+          RH: {x: -0.15, y: 0.0, z: -0.4}
       # 2) Air tuck: quickly retract front legs while the body is moving forward.
       - name: air_front_tuck
-        duration: 0.16
+        duration: 0.1
         mode: step
         feet:
-          LF: {x: -0.08, y: 0.0, z: -0.15}
-          RF: {x: -0.08, y: 0.0, z: -0.15}
+          LF: {x: 0.0, y: 0.0, z: -0.15}
+          RF: {x: 0.0, y: 0.0, z: -0.15}
           LH: {x: -0.10, y: 0.0, z: -0.30}
           RH: {x: -0.10, y: 0.0, z: -0.30}
