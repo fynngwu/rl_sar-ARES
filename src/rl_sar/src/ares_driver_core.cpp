@@ -730,6 +730,13 @@ private:
             for (int i = 0; i < 4; ++i) { config_kp_[i] = hip.kp;    config_kd_[i] = hip.kd; }
             for (int i = 4; i < 8; ++i) { config_kp_[i] = thigh.kp;  config_kd_[i] = thigh.kd; }
             for (int i = 8; i < 12; ++i) { config_kp_[i] = knee.kp;  config_kd_[i] = knee.kd; }
+
+            if (pc["torque_limits"]) {
+                auto tl = yaml_utils::LoadScalarOrArray(pc["torque_limits"], NUM_JOINTS);
+                config_torque_.assign(tl.begin(), tl.begin() + std::min(tl.size(), static_cast<size_t>(NUM_JOINTS)));
+                printf("[DRIVER] Loaded torque_limits from position_control\n");
+            }
+
             printf("[DRIVER] Loaded position_control PID\n");
         } catch (const std::exception& e) {
             printf("[DRIVER] Failed to load position_control PID: %s\n", e.what());
