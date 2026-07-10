@@ -51,10 +51,10 @@ public:
         stand_height_ = 0.3;
 
         // Workspace limits (hip frame)
-        x_min_ = -0.15;  x_max_ = 0.15;
+        x_min_ = -0.25;  x_max_ = 0.15;
         y_min_ = -0.1;   y_max_ = 0.1;
-        r_min_ = 0.15;   r_max_ = 0.38;
-        z_min_ = -0.35;   z_max_ = -0.15;
+        r_min_ = 0.15;   r_max_ = 0.4;
+        z_min_ = -0.38;   z_max_ = -0.15;
 
         // Joint offsets: left legs and right legs have opposite signs
         joint_offsets_ <<  0.0,   0.0,   0.0,   0.0,    // abad:  LF, RF, LH, RH
