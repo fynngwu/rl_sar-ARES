@@ -106,6 +106,7 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
         }
 
         // Load gamepad limits from YAML (required)
+        gamepad_limits_.clear();
         if (rc["gamepad_limits"]) {
             auto gl = rc["gamepad_limits"];
             if (gl["linear_x"])
@@ -194,6 +195,9 @@ bool AresRL::Init(const std::string& policy_dir, const std::string& policy_name)
     printf("[RL]   default_dof_pos: %s\n", FormatVector(default_dof_pos_).c_str());
     printf("[RL]   action_scale:    %s\n", FormatVector(action_scale_).c_str());
     printf("[RL]   commands_scale:  %s\n", FormatVector(commands_scale_).c_str());
+    printf("[RL]   kp:              %s\n", FormatVector(current_kp_).c_str());
+    printf("[RL]   kd:              %s\n", FormatVector(current_kd_).c_str());
+    printf("[RL]   torque_limits:   %s\n", FormatVector(current_torque_limits_).c_str());
     printf("[RL]   observations:    %s\n", FormatStringVector(observations_).c_str());
 
     if (!position_limits_.empty()) {

@@ -7,31 +7,51 @@
 #include "jump_controller.hpp"
 #include <cstdio>
 #include <cmath>
+#include <array>
+
+static constexpr int MOTOR_IDX[4][3] = {{0,4,8},{2,6,10},{1,5,9},{3,7,11}};
 
 int main()
 {
     printf("=== Jump Trajectory Test ===\n\n");
 
     JumpController jc;
-    jc.LoadFromYaml("policy", "dogv2_cts/cts");
+    jc.LoadFromYaml("policy", "position_control");
 
-    // 模拟 driver 调用: Reset 激活轨迹
     jc.Reset();
 
     printf("\n=== Simulate driver loop ===\n");
+    const char* leg_names[] = {"FL", "RL", "FR", "RR"};
     int step = 0;
+    std::array<float, 12> last_pos{};
     while (!jc.IsDone()) {
         auto pos = jc.Update();
-        if (step % 5 == 0) {  // 每5步打印一次 (100ms间隔)
+        last_pos = pos;
+        if (step % 5 == 0) {
             printf("[%2d] ", step);
-            int legs[4][3] = {{0,4,8},{2,6,10},{1,5,9},{3,7,11}};
             for (int leg = 0; leg < 4; ++leg)
-                printf("(%+6.3f,%+6.3f,%+6.3f) ",
-                       pos[legs[leg][0]], pos[legs[leg][1]], pos[legs[leg][2]]);
+                printf("%s(%+7.4f,%+7.4f,%+7.4f) ",
+                       leg_names[leg], pos[MOTOR_IDX[leg][0]], pos[MOTOR_IDX[leg][1]], pos[MOTOR_IDX[leg][2]]);
             printf("\n");
         }
         step++;
     }
-    printf("Done at step %d (IsDone=%d, IsActive=%d)\n",
-           step, jc.IsDone(), jc.IsActive());
+    printf("Done at step %d\n\n", step);
+
+    // 打印最终轨迹点 (落地) 的 motor 值
+    printf("=== Final landing motor targets ===\n");
+    printf("Motor:   0    1    2    3    4    5    6    7    8    9   10   11\n");
+    printf("Joint: --abad--      ----hip----       ---knee---\n");
+    printf("Leg:   LF   LH   RF   RH   LF   LH   RF   RH   LF   LH   RF   RH\n");
+    printf("Group: F    R    F    R    F    R    F    R    F    R    F    R\n");
+    printf("Rad:  ");
+    for (int j = 0; j < 12; ++j)
+        printf("%6.3f ", last_pos[j]);
+    printf("\n");
+    printf("Deg:  ");
+    for (int j = 0; j < 12; ++j)
+        printf("%+6.1f ", last_pos[j] * RAD2DEG);
+    printf("\n");
+
+    return 0;
 }

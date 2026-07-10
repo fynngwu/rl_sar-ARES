@@ -228,6 +228,9 @@ private:
             msg.effort.push_back(tl[i]);
         }
         motor_param_pub_->publish(msg);
+        RCLCPP_INFO(get_logger(), "Published /motor_param_update: kp[0]=%.1f kd[0]=%.2f torque[0]=%.1f",
+                     kp.empty() ? 0.f : kp[0], kd.empty() ? 0.f : kd[0],
+                     tl.empty() ? 0.f : tl[0]);
     }
 
     void MotorFeedbackCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
@@ -293,7 +296,14 @@ private:
 
         selected_policy_ = new_policy;
         PublishMotorParams();
-        RCLCPP_INFO(get_logger(), "Policy switched to %s", selected_policy_.c_str());
+
+        const auto& kp = rl_.GetKp();
+        const auto& kd = rl_.GetKd();
+        const auto& tl = rl_.GetTorqueLimits();
+        RCLCPP_INFO(get_logger(), "Policy switched to %s — kp[0]=%.1f kd[0]=%.2f torque[0]=%.1f",
+                     selected_policy_.c_str(),
+                     kp.empty() ? 0.f : kp[0], kd.empty() ? 0.f : kd[0],
+                     tl.empty() ? 0.f : tl[0]);
     }
 
     AresRL rl_;

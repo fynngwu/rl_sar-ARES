@@ -26,7 +26,7 @@ dogv2_cts/cts:
 
   # PD gains (driver reads these at init)
   fixed_kp: 20
-  fixed_kd: 1.0
+  fixed_kd: 0.5
   torque_limits: 17
 
   # Position limits (driver order: HipA LF/LR/RF/RR, HipF LF/LR/RF/RR, Knee LF/LR/RF/RR)

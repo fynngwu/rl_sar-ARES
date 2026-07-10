@@ -64,10 +64,10 @@ position_control:
         mode: step
       # 空中收腿/落地: 前腿向前(+30), 后腿向后(-10)
       - theta_front: 30
-        theta_rear: -10
+        theta_rear: -20
         r_front: 0.2
-        r_rear: 0.14
-        duration: 0.1
+        r_rear: 0.12
+        duration: 0.2
         mode: smooth
 
   # Climb-over-wall sequence (RB+Y from STAND).

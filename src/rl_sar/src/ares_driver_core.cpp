@@ -147,20 +147,18 @@ public:
                          const std::vector<float>& torque)
     {
         std::lock_guard<std::mutex> lock(driver_mutex_);
-        if (!driver_) return;
         size_t n = std::min({kp.size(), kd.size(), static_cast<size_t>(NUM_JOINTS)});
-        for (size_t i = 0; i < n; ++i)
-            driver_->SetMITParams(i, kp[i], kd[i]);
-        if (!torque.empty()) {
-            size_t tn = std::min(torque.size(), static_cast<size_t>(NUM_JOINTS));
-            for (size_t i = 0; i < tn; ++i)
-                driver_->SetTorqueLimit(i, torque[i]);
-        }
-        config_kp_.assign(kp.begin(), kp.begin() + n);
-        config_kd_.assign(kd.begin(), kd.begin() + n);
+        rl_kp_.assign(kp.begin(), kp.begin() + n);
+        rl_kd_.assign(kd.begin(), kd.begin() + n);
         if (!torque.empty())
-            config_torque_.assign(torque.begin(), torque.begin() + std::min(torque.size(), static_cast<size_t>(NUM_JOINTS)));
-        printf("[DRIVER] Motor params updated\n");
+            rl_torque_.assign(torque.begin(), torque.begin() + std::min(torque.size(), static_cast<size_t>(NUM_JOINTS)));
+        printf("[DRIVER] RL motor params cached: kp=");
+        for (size_t i = 0; i < rl_kp_.size(); ++i) printf("%.1f ", rl_kp_[i]);
+        printf("kd=");
+        for (size_t i = 0; i < rl_kd_.size(); ++i) printf("%.2f ", rl_kd_[i]);
+        printf("torque=");
+        for (size_t i = 0; i < rl_torque_.size(); ++i) printf("%.1f ", rl_torque_[i]);
+        printf("\n");
     }
 
     DriverMode GetMode() const { return mode_.load(); }
@@ -459,10 +457,11 @@ private:
 
     void ApplyMotorParams(bool use_position_control_pid)
     {
-        std::vector<float> kp = config_kp_;
-        std::vector<float> kd = config_kd_;
+        std::vector<float> kp, kd, torque;
 
         if (use_position_control_pid) {
+            kp.assign(NUM_JOINTS, 40.0f);
+            kd.assign(NUM_JOINTS, 2.0f);
             std::string config_path = policy_dir_ + "/position_control/config.yaml";
             try {
                 YAML::Node root = YAML::LoadFile(config_path);
@@ -474,8 +473,6 @@ private:
                 JointPid thigh = LoadJointPid(rc["joints"], "thigh");
                 JointPid knee = LoadJointPid(rc["joints"], "knee");
 
-                kp.assign(NUM_JOINTS, 0.0f);
-                kd.assign(NUM_JOINTS, 0.0f);
                 for (int i = 0; i < NUM_JOINTS; ++i) {
                     const JointPid& pid = (i < 4) ? hip : (i < 8 ? thigh : knee);
                     kp[i] = pid.kp;
@@ -483,15 +480,27 @@ private:
                 }
                 printf("[DRIVER] Position control PID loaded: %s\n", config_path.c_str());
             } catch (const std::exception& e) {
-                printf("[DRIVER] Position control PID unavailable (%s). Using policy motor params.\n",
+                printf("[DRIVER] Position control PID unavailable (%s). Using defaults.\n",
                        e.what());
             }
+            torque = config_torque_;
+        } else {
+            kp = rl_kp_;
+            kd = rl_kd_;
+            torque = rl_torque_;
+            printf("[DRIVER] Apply RL motor params: kp=");
+            for (size_t i = 0; i < kp.size(); ++i) printf("%.1f ", kp[i]);
+            printf("kd=");
+            for (size_t i = 0; i < kd.size(); ++i) printf("%.2f ", kd[i]);
+            printf("torque=");
+            for (size_t i = 0; i < torque.size(); ++i) printf("%.1f ", torque[i]);
+            printf("\n");
         }
 
         for (int i = 0; i < NUM_JOINTS; ++i)
             driver_->SetMITParams(i, kp[i], kd[i]);
-        for (int i = 0; i < NUM_JOINTS && i < static_cast<int>(config_torque_.size()); ++i)
-            driver_->SetTorqueLimit(i, config_torque_[i]);
+        for (int i = 0; i < NUM_JOINTS && i < static_cast<int>(torque.size()); ++i)
+            driver_->SetTorqueLimit(i, torque[i]);
     }
 
     void TryCreateDriver()
@@ -594,7 +603,7 @@ private:
             auto s = driver_->GetJointStates();
             stand_start_pos_ = s.position;
             driver_->SetAllJointPositions(stand_start_pos_);
-            ApplyMotorParams(false);
+            ApplyMotorParams(true);
             stand_step_ = 0;
             printf("[MODE] → STAND\n");
             break;
@@ -769,9 +778,13 @@ private:
     int stand_step_ = 0;
     std::array<float, NUM_JOINTS> stand_start_pos_{};
 
-    std::vector<float> config_kp_;
-    std::vector<float> config_kd_;
-    std::vector<float> config_torque_;
+    std::vector<float> config_kp_;       // position_control kp
+    std::vector<float> config_kd_;       // position_control kd
+    std::vector<float> config_torque_;   // position_control torque
+
+    std::vector<float> rl_kp_;           // RL strategy kp
+    std::vector<float> rl_kd_;           // RL strategy kd
+    std::vector<float> rl_torque_;       // RL strategy torque
     float gamepad_scale_ = 0.0f;
     static constexpr float HEIGHT_MIN = -0.15f;
     static constexpr float HEIGHT_MAX = 0.05f;

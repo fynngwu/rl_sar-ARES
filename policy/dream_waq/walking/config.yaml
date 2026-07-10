@@ -24,8 +24,8 @@ dream_waq/walking:
   gravity_vec_scale: 1.0
 
   # PD gains
-  fixed_kp: 24
-  fixed_kd: 1.0
+  fixed_kp: 25
+  fixed_kd: 0.8
   torque_limits: 17
 
   # Position limits
@@ -52,9 +52,9 @@ dream_waq/walking:
   # Driver config
   gamepad_scale: 1.0
   gamepad_limits:
-    linear_x: [-1.2, 1.2]
-    linear_y: [-0.8, 0.8]
-    angular_z: [-1.5, 1.5]
+    linear_x: [-1.0, 1.2]
+    linear_y: [-0.6, 0.6]
+    angular_z: [-1.0, 1.0]
 
   # Joint mapping
   topic_to_driver: [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
