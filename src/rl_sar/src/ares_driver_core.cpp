@@ -1,6 +1,7 @@
 #include "ares_driver_core.hpp"
 #include "yaml_utils.hpp"
 
+#include "climb_controller.hpp"
 #include "dog_driver.hpp"
 #include "jump_controller.hpp"
 #include "observations.hpp"
@@ -29,6 +30,7 @@ public:
         gamepad_scale_ = 1.0f;
 
         jump_controller_.LoadFromYaml(policy_dir, "position_control");
+        climb_controller_.LoadFromYaml(policy_dir, "position_control");
 
         TryCreateDriver();
         CheckGamepadConnection();
@@ -326,6 +328,27 @@ public:
                     next_tick = std::chrono::steady_clock::now();
                 break;
             }
+            case DriverMode::CLIMB: {
+                if (climb_controller_.IsActive()) {
+                    auto target = climb_controller_.Update();
+                    {
+                        std::lock_guard<std::mutex> lock(driver_mutex_);
+                        if (driver_) driver_->SetAllJointPositions(target);
+                    }
+                    if (climb_controller_.IsDone()) {
+                        printf("[CLIMB] Finished → STAND\n");
+                        climb_controller_.Stop();
+                        mode_ = DriverMode::STAND;
+                    }
+                } else {
+                    mode_ = DriverMode::STAND;
+                }
+                next_tick += LOOP_DT;
+                std::this_thread::sleep_until(next_tick);
+                if (std::chrono::steady_clock::now() > next_tick + LOOP_DT)
+                    next_tick = std::chrono::steady_clock::now();
+                break;
+            }
             }
         }
     }
@@ -340,6 +363,7 @@ private:
         case DriverMode::DAMPING: return "DAMPING";
         case DriverMode::GAIT:    return "GAIT";
         case DriverMode::JUMP:    return "JUMP";
+        case DriverMode::CLIMB:   return "CLIMB";
         }
         return "???";
     }
@@ -598,6 +622,16 @@ private:
             jump_controller_.Reset();
             printf("[MODE] → JUMP\n");
             break;
+        case DriverMode::CLIMB:
+            if (!climb_controller_.Start()) {
+                printf("[MODE] CLIMB unavailable → STAND\n");
+                mode_ = DriverMode::STAND;
+                break;
+            }
+            ApplyMotorParams(true);
+            driver_->EnableAll();
+            printf("[MODE] → CLIMB\n");
+            break;
         }
     }
 
@@ -674,7 +708,10 @@ private:
         } else if (rb_b_edge) {
             CyclePolicy(+1);
         } else if (rb_y_edge) {
-            CyclePolicy(-1);
+            if (mode_.load() == DriverMode::STAND) {
+                printf("[GAMEPAD] RB+Y → CLIMB\n");
+                mode_ = DriverMode::CLIMB;
+            }
         }
     }
 
@@ -762,6 +799,7 @@ private:
 
     QuadrupedLegController gait_controller_;
     JumpController jump_controller_;
+    ClimbController climb_controller_;
 };
 
 AresDriverCore::AresDriverCore(const std::string& policy_dir)

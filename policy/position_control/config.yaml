@@ -67,3 +67,51 @@ position_control:
         r: 0.18
         duration: 0.1
         mode: smooth
+
+  # Climb-over-wall sequence (RB+Y from STAND).
+  # Feet are in each hip frame [m]. Current IK clamps x/z to the controller workspace,
+  # so these defaults are intentionally conservative and should be tuned on a protected robot.
+  climb:
+    dt: 0.02
+    start_feet:
+      LF: {x: -0.05, y: 0.0, z: -0.30}
+      RF: {x: -0.05, y: 0.0, z: -0.30}
+      LH: {x: -0.05, y: 0.0, z: -0.30}
+      RH: {x: -0.05, y: 0.0, z: -0.30}
+    phases:
+      # 1) Front legs climb onto the wall/top edge while rear legs keep support.
+      - name: front_legs_on_wall
+        duration: 1.00
+        mode: smooth
+        feet:
+          LF: {x: 0.14, y: 0.0, z: -0.15}
+          RF: {x: 0.14, y: 0.0, z: -0.15}
+          LH: {x: -0.08, y: 0.0, z: -0.30}
+          RH: {x: -0.08, y: 0.0, z: -0.30}
+      # 2) Rear legs push while front legs move to the landing side.
+      - name: rear_push_front_land
+        duration: 0.80
+        mode: smooth
+        feet:
+          LF: {x: 0.08, y: 0.0, z: -0.30}
+          RF: {x: 0.08, y: 0.0, z: -0.30}
+          LH: {x: -0.15, y: 0.0, z: -0.35}
+          RH: {x: -0.15, y: 0.0, z: -0.35}
+      # 3) Rear legs tuck over the wall.
+      - name: rear_legs_tuck
+        duration: 0.80
+        mode: smooth
+        feet:
+          LF: {x: -0.02, y: 0.0, z: -0.30}
+          RF: {x: -0.02, y: 0.0, z: -0.30}
+          LH: {x: 0.12, y: 0.0, z: -0.15}
+          RH: {x: 0.12, y: 0.0, z: -0.15}
+      # 4) Rear legs land and recover neutral stand.
+      - name: rear_legs_land
+        duration: 1.00
+        mode: smooth
+        feet:
+          LF: {x: -0.05, y: 0.0, z: -0.30}
+          RF: {x: -0.05, y: 0.0, z: -0.30}
+          LH: {x: -0.05, y: 0.0, z: -0.30}
+          RH: {x: -0.05, y: 0.0, z: -0.30}

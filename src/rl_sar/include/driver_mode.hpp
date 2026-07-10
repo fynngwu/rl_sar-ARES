@@ -8,5 +8,6 @@ enum class DriverMode : uint8_t {
     RL,
     DAMPING,
     GAIT,
-    JUMP
+    JUMP,
+    CLIMB
 };

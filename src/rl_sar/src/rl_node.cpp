@@ -131,7 +131,7 @@ private:
     void DriverModeCallback(const std_msgs::msg::UInt8::SharedPtr msg)
     {
         uint8_t raw = msg->data;
-        if (raw > static_cast<uint8_t>(DriverMode::DAMPING))
+        if (raw > static_cast<uint8_t>(DriverMode::CLIMB))
             return;
         DriverMode new_mode = static_cast<DriverMode>(raw);
 
