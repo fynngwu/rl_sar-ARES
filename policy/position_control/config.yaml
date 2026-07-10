@@ -106,21 +106,3 @@ position_control:
           RF: {x: -0.08, y: 0.0, z: -0.15}
           LH: {x: -0.10, y: 0.0, z: -0.30}
           RH: {x: -0.10, y: 0.0, z: -0.30}
-      # 3) Front landing: put front legs down on the far side before moving rear legs.
-      - name: front_legs_land
-        duration: 0.20
-        mode: step
-        feet:
-          LF: {x: 0.15, y: 0.0, z: -0.35}
-          RF: {x: 0.15, y: 0.0, z: -0.35}
-          LH: {x: -0.10, y: 0.0, z: -0.30}
-          RH: {x: -0.10, y: 0.0, z: -0.30}
-      # 4) Hold front landing briefly so the robot does not immediately collapse forward.
-      - name: front_landing_hold
-        duration: 0.25
-        mode: step
-        feet:
-          LF: {x: 0.15, y: 0.0, z: -0.35}
-          RF: {x: 0.15, y: 0.0, z: -0.35}
-          LH: {x: -0.10, y: 0.0, z: -0.30}
-          RH: {x: -0.10, y: 0.0, z: -0.30}
