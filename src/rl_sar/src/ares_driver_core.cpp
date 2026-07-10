@@ -497,6 +497,13 @@ private:
             printf("\n");
         }
 
+        if (static_cast<int>(kp.size()) < NUM_JOINTS || static_cast<int>(kd.size()) < NUM_JOINTS) {
+            printf("[DRIVER] ERROR: Motor params not loaded (kp=%zu kd=%zu torque=%zu). "
+                   "Falling back to damping.\n", kp.size(), kd.size(), torque.size());
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                driver_->SetMITParams(i, 0.0f, 4.0f);
+            return;
+        }
         for (int i = 0; i < NUM_JOINTS; ++i)
             driver_->SetMITParams(i, kp[i], kd[i]);
         for (int i = 0; i < NUM_JOINTS && i < static_cast<int>(torque.size()); ++i)

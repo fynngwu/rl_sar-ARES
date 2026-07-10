@@ -31,7 +31,9 @@ public:
         using namespace std::placeholders;
 
         motor_command_pub_ = create_publisher<sensor_msgs::msg::JointState>("/motor_command", 10);
-        motor_param_pub_   = create_publisher<sensor_msgs::msg::JointState>("/motor_param_update", 1);
+        rclcpp::QoS motor_param_qos(rclcpp::KeepLast(1));
+        motor_param_qos.transient_local();
+        motor_param_pub_ = create_publisher<sensor_msgs::msg::JointState>("/motor_param_update", motor_param_qos);
 
         driver_mode_sub_ = create_subscription<std_msgs::msg::UInt8>(
             "/driver_mode", 10, std::bind(&AresRLNode::DriverModeCallback, this, _1));

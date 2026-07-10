@@ -58,8 +58,10 @@ public:
             "/motor_command", 10,
             std::bind(&AresDriverNode::MotorCommandCallback, this, std::placeholders::_1));
 
+        rclcpp::QoS motor_param_qos(rclcpp::KeepLast(1));
+        motor_param_qos.transient_local();
         motor_param_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
-            "/motor_param_update", 1,
+            "/motor_param_update", motor_param_qos,
             std::bind(&AresDriverNode::MotorParamCallback, this, std::placeholders::_1));
 
         xbox_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
