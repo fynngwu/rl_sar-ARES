@@ -95,21 +95,43 @@ public:
         auto now = std::chrono::steady_clock::now();
         float dpad_y = gamepad_->GetAxis(7);
         float dpad_x = gamepad_->GetAxis(6);
-        if ((now - last_height_change_) >= std::chrono::milliseconds(200)) {
-            if (dpad_y < -0.5f) {
-                float old = height_value_;
-                height_value_ = std::min(HEIGHT_MAX, height_value_ + HEIGHT_STEP);
-                if (height_value_ != old) {
-                    printf("[GAMEPAD] DPad↑ Height: %.3f → %.3f\n", old, height_value_);
-                    last_height_change_ = now;
+        bool lb = gamepad_->GetButton(4);
+        if (lb) {
+            if ((now - last_step_height_change_) >= std::chrono::milliseconds(200)) {
+                if (dpad_y < -0.5f) {
+                    float old = step_height_value_;
+                    step_height_value_ = std::min(STEP_HEIGHT_MAX, step_height_value_ + STEP_HEIGHT_STEP);
+                    if (step_height_value_ != old) {
+                        printf("[GAMEPAD] LB+DPad↑ StepHeight: %.3f → %.3f\n", old, step_height_value_);
+                        last_step_height_change_ = now;
+                    }
+                }
+                if (dpad_y > 0.5f) {
+                    float old = step_height_value_;
+                    step_height_value_ = std::max(STEP_HEIGHT_MIN, step_height_value_ - STEP_HEIGHT_STEP);
+                    if (step_height_value_ != old) {
+                        printf("[GAMEPAD] LB+DPad↓ StepHeight: %.3f → %.3f\n", old, step_height_value_);
+                        last_step_height_change_ = now;
+                    }
                 }
             }
-            if (dpad_y > 0.5f) {
-                float old = height_value_;
-                height_value_ = std::max(HEIGHT_MIN, height_value_ - HEIGHT_STEP);
-                if (height_value_ != old) {
-                    printf("[GAMEPAD] DPad↓ Height: %.3f → %.3f\n", old, height_value_);
-                    last_height_change_ = now;
+        } else {
+            if ((now - last_height_change_) >= std::chrono::milliseconds(200)) {
+                if (dpad_y < -0.5f) {
+                    float old = height_value_;
+                    height_value_ = std::min(HEIGHT_MAX, height_value_ + HEIGHT_STEP);
+                    if (height_value_ != old) {
+                        printf("[GAMEPAD] DPad↑ Height: %.3f → %.3f\n", old, height_value_);
+                        last_height_change_ = now;
+                    }
+                }
+                if (dpad_y > 0.5f) {
+                    float old = height_value_;
+                    height_value_ = std::max(HEIGHT_MIN, height_value_ - HEIGHT_STEP);
+                    if (height_value_ != old) {
+                        printf("[GAMEPAD] DPad↓ Height: %.3f → %.3f\n", old, height_value_);
+                        last_height_change_ = now;
+                    }
                 }
             }
         }
@@ -140,6 +162,7 @@ public:
         cmd.angular_z = apply_deadzone(raw_yaw) * gamepad_scale_;
         cmd.linear_z = height_value_;
         cmd.stride_scale = static_cast<float>(stride_scale_value_);
+        cmd.step_height = step_height_value_;
         return cmd;
     }
 
@@ -256,6 +279,7 @@ public:
                     az = gp.angular_z;
                     height_cmd = gp.linear_z;
                     stride_cmd = gp.stride_scale;
+                    gait_params_.step_height = gp.step_height;
                 }
 
                 GaitCommand gait_cmd{lx, ly, az};
@@ -729,6 +753,7 @@ private:
                 mode_ = DriverMode::CLIMB;
             }
         }
+
     }
 
     void LoadPositionControlPid()
@@ -796,10 +821,15 @@ private:
     static constexpr float HEIGHT_MIN = -0.15f;
     static constexpr float HEIGHT_MAX = 0.05f;
     static constexpr float HEIGHT_STEP = 0.03f;
+    static constexpr float STEP_HEIGHT_MIN = 0.05f;
+    static constexpr float STEP_HEIGHT_MAX = 0.18f;
+    static constexpr float STEP_HEIGHT_STEP = 0.05f;
     static constexpr float GAIT_LINEAR_Y_DEADZONE = 0.20f;
     float height_value_ = 0.0f;
+    float step_height_value_ = 0.10f;
     float speed_scale_x_ = 1.0f;
     std::chrono::steady_clock::time_point last_height_change_{};
+    std::chrono::steady_clock::time_point last_step_height_change_{};
     std::chrono::steady_clock::time_point last_speed_scale_change_{};
     GaitParams gait_params_;
     double stride_scale_value_ = 1.0;
