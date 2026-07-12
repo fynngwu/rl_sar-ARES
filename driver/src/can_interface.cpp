@@ -44,6 +44,11 @@ CANInterface::CANInterface(const char* can_if) : can_socket(-1), if_name(can_if)
     timeout.tv_sec = 0;
     timeout.tv_usec = 5000;
     setsockopt(can_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    // Write timeout: prevent indefinite block when motors offline (no ACK → TX full)
+    struct timeval snd_timeout{};
+    snd_timeout.tv_sec = 0;
+    snd_timeout.tv_usec = 1000;  // 1ms, cooldown handles retry avoidance
+    setsockopt(can_socket, SOL_SOCKET, SO_SNDTIMEO, &snd_timeout, sizeof(snd_timeout));
     // Writes are blocking (default socket behavior, matches UIKA)
 
     running = true;
@@ -122,15 +127,15 @@ int CANInterface::SendMessage(const struct can_frame* frame) {
     int nbytes = write(can_socket, frame, sizeof(struct can_frame));
     if (nbytes != sizeof(struct can_frame)) {
         const int err = (nbytes < 0) ? errno : EIO;
-        if (err == ENOBUFS) {
-            enobufs_cooldown_until = now + std::chrono::milliseconds(20);
+        if (err == ENOBUFS || err == EAGAIN || err == EWOULDBLOCK) {
+            enobufs_cooldown_until = now + std::chrono::milliseconds(500);
             if (now - last_enobufs_log >= std::chrono::seconds(1)) {
                 std::fprintf(stderr,
-                             "[CAN] %s write ENOBUFS: TX queue full, cooling down 20ms\n",
-                             if_name.c_str());
+                             "[CAN] %s write %s: TX queue full/timeout, cooling down 500ms\n",
+                             if_name.c_str(), std::strerror(err));
                 last_enobufs_log = now;
             }
-            return -ENOBUFS;
+            return -err;
         }
 
         std::fprintf(stderr, "[CAN] %s write failed: %s\n", if_name.c_str(), std::strerror(err));

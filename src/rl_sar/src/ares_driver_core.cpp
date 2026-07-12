@@ -66,7 +66,6 @@ public:
 
     JointFeedback GetTopicFeedback() const
     {
-        std::lock_guard<std::mutex> lock(driver_mutex_);
         if (!driver_) return {};
         auto s = driver_->GetJointStates();
         JointFeedback fb;
@@ -80,7 +79,6 @@ public:
 
     ImuData GetImuData() const
     {
-        std::lock_guard<std::mutex> lock(driver_mutex_);
         if (!driver_) return {};
         auto imu = driver_->GetIMUData();
         return {imu.angular_velocity, imu.projected_gravity};
@@ -169,12 +167,14 @@ public:
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                          const std::vector<float>& torque)
     {
-        std::lock_guard<std::mutex> lock(driver_mutex_);
-        size_t n = std::min({kp.size(), kd.size(), static_cast<size_t>(NUM_JOINTS)});
-        rl_kp_.assign(kp.begin(), kp.begin() + n);
-        rl_kd_.assign(kd.begin(), kd.begin() + n);
-        if (!torque.empty())
-            rl_torque_.assign(torque.begin(), torque.begin() + std::min(torque.size(), static_cast<size_t>(NUM_JOINTS)));
+        {
+            std::lock_guard<std::mutex> lock(rl_params_mutex_);
+            size_t n = std::min({kp.size(), kd.size(), static_cast<size_t>(NUM_JOINTS)});
+            rl_kp_.assign(kp.begin(), kp.begin() + n);
+            rl_kd_.assign(kd.begin(), kd.begin() + n);
+            if (!torque.empty())
+                rl_torque_.assign(torque.begin(), torque.begin() + std::min(torque.size(), static_cast<size_t>(NUM_JOINTS)));
+        }
         printf("[DRIVER] RL motor params cached: kp=");
         for (size_t i = 0; i < rl_kp_.size(); ++i) printf("%.1f ", rl_kp_[i]);
         printf("kd=");
@@ -205,7 +205,6 @@ public:
 
     bool imu_connected() const
     {
-        std::lock_guard<std::mutex> lock(driver_mutex_);
         return driver_ && driver_->IsIMUConnected();
     }
 
@@ -252,10 +251,7 @@ public:
                     std::lock_guard<std::mutex> lock(cmd_mutex_);
                     target = latest_target_;
                 }
-                {
-                    std::lock_guard<std::mutex> lock(driver_mutex_);
-                    if (driver_) driver_->SetAllJointPositions(target);
-                }
+                if (driver_) driver_->SetAllJointPositions(target);
                 next_tick += RL_PERIOD;
                 std::this_thread::sleep_until(next_tick);
                 if (std::chrono::steady_clock::now() > next_tick + RL_PERIOD)
@@ -300,10 +296,7 @@ public:
                     for (int ji = 0; ji < 3; ++ji)
                         cmd[LEG_JOINTS[leg][ji]] = (float)states[leg].q(ji);
 
-                {
-                    std::lock_guard<std::mutex> lock(driver_mutex_);
-                    if (driver_) driver_->SetAllJointPositions(cmd);
-                }
+                if (driver_) driver_->SetAllJointPositions(cmd);
                 next_tick += LOOP_DT;
                 std::this_thread::sleep_until(next_tick);
                 if (std::chrono::steady_clock::now() > next_tick + LOOP_DT)
@@ -316,10 +309,7 @@ public:
                     std::array<float, NUM_JOINTS> target;
                     for (int i = 0; i < NUM_JOINTS; ++i)
                         target[i] = stand_start_pos_[i] * (1.0f - alpha);
-                    {
-                        std::lock_guard<std::mutex> lock(driver_mutex_);
-                        if (driver_) driver_->SetAllJointPositions(target);
-                    }
+                    if (driver_) driver_->SetAllJointPositions(target);
                     stand_step_++;
                 } 
                 next_tick = std::chrono::steady_clock::now();
@@ -334,10 +324,7 @@ public:
             case DriverMode::JUMP: {
                 if (jump_controller_.IsActive()) {
                     auto target = jump_controller_.Update();
-                    {
-                        std::lock_guard<std::mutex> lock(driver_mutex_);
-                        if (driver_) driver_->SetAllJointPositions(target);
-                    }
+                    if (driver_) driver_->SetAllJointPositions(target);
                     if (jump_controller_.IsDone()) {
                         printf("[JUMP] Finished → STAND\n");
                         jump_controller_.Reset();
@@ -353,10 +340,7 @@ public:
             case DriverMode::CLIMB: {
                 if (climb_controller_.IsActive()) {
                     auto target = climb_controller_.Update();
-                    {
-                        std::lock_guard<std::mutex> lock(driver_mutex_);
-                        if (driver_) driver_->SetAllJointPositions(target);
-                    }
+                    if (driver_) driver_->SetAllJointPositions(target);
                     if (climb_controller_.IsDone()) {
                         printf("[CLIMB] Finished → STAND\n");
                         climb_controller_.Stop();
@@ -509,9 +493,12 @@ private:
             }
             torque = config_torque_;
         } else {
-            kp = rl_kp_;
-            kd = rl_kd_;
-            torque = rl_torque_;
+            {
+                std::lock_guard<std::mutex> lock(rl_params_mutex_);
+                kp = rl_kp_;
+                kd = rl_kd_;
+                torque = rl_torque_;
+            }
             printf("[DRIVER] Apply RL motor params: kp=");
             for (size_t i = 0; i < kp.size(); ++i) printf("%.1f ", kp[i]);
             printf("kd=");
@@ -566,7 +553,6 @@ private:
         }
 
         if (!imu) {
-            std::lock_guard<std::mutex> lock(driver_mutex_);
             if (driver_) {
                 printf("[DRIVER] IMU offline, reconnecting...\n");
                 driver_->ReconnectIMU();
@@ -587,7 +573,6 @@ private:
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-        std::lock_guard<std::mutex> lock(driver_mutex_);
         printf("[DRIVER] Destroying old DogDriver and creating new one...\n");
         driver_.reset();
         TryCreateDriver();
@@ -629,7 +614,6 @@ private:
 
     void ApplyMode(DriverMode /*prev*/, DriverMode next)
     {
-        std::lock_guard<std::mutex> lock(driver_mutex_);
         if (!driver_) {
             printf("[MODE] %s (driver offline)\n", mode_name(next));
             return;
@@ -817,7 +801,7 @@ private:
 
     std::thread worker_thread_;
     mutable std::mutex cmd_mutex_;
-    mutable std::mutex driver_mutex_;
+    mutable std::mutex rl_params_mutex_;
     mutable std::mutex gamepad_mutex_;
     std::array<float, NUM_JOINTS> latest_target_{};
     std::atomic<DriverMode> mode_{DriverMode::DISABLE};
