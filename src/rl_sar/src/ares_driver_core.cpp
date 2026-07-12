@@ -578,6 +578,21 @@ private:
         }
     }
 
+    void ReconnectCAN()
+    {
+        printf("[DRIVER] Running start.sh to re-up CAN...\n");
+        int ret = system("/home/ares/rl_sar-ARES/start.sh");
+        if (ret != 0) {
+            printf("[DRIVER] start.sh failed with code %d\n", ret);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        std::lock_guard<std::mutex> lock(driver_mutex_);
+        printf("[DRIVER] Destroying old DogDriver and creating new one...\n");
+        driver_.reset();
+        TryCreateDriver();
+    }
+
     void CheckGamepadConnection()
     {
         std::lock_guard<std::mutex> lock(gamepad_mutex_);
@@ -686,6 +701,7 @@ private:
         bool y     = gamepad_->GetButton(3);
         bool lb    = gamepad_->GetButton(4);
         bool rb    = gamepad_->GetButton(5);
+        bool start = gamepad_->GetButton(7);
 
         bool rb_x     = rb && x;
         bool lb_rb    = lb && rb;
@@ -696,6 +712,7 @@ private:
         bool rb_a     = rb && a;
         bool rb_b     = rb && b;
         bool rb_y     = rb && y;
+        bool lb_start = lb && start;
 
         bool rb_x_edge     = rb_x     && !prev_rb_x_;
         bool lb_rb_edge    = lb_rb    && !prev_lb_rb_;
@@ -706,6 +723,7 @@ private:
         bool rb_a_edge     = rb_a     && !prev_rb_a_;
         bool rb_b_edge     = rb_b     && !prev_rb_b_;
         bool rb_y_edge     = rb_y     && !prev_rb_y_;
+        bool lb_start_edge = lb_start && !prev_lb_start_;
 
         prev_rb_x_     = rb_x;
         prev_lb_rb_    = lb_rb;
@@ -716,6 +734,7 @@ private:
         prev_rb_a_     = rb_a;
         prev_rb_b_     = rb_b;
         prev_rb_y_     = rb_y;
+        prev_lb_start_ = lb_start;
 
         if (rb_x_edge) {
             printf("[GAMEPAD] RB+X → DISABLE\n");
@@ -752,6 +771,9 @@ private:
                 printf("[GAMEPAD] RB+Y → CLIMB\n");
                 mode_ = DriverMode::CLIMB;
             }
+        } else if (lb_start_edge) {
+            printf("[GAMEPAD] LB+Start → RECONNECT CAN\n");
+            ReconnectCAN();
         }
 
     }
@@ -843,6 +865,7 @@ private:
     bool prev_lb_a_ = false, prev_lb_b_ = false, prev_lb_y_ = false, prev_lb_x_ = false;
     bool prev_rb_a_ = false;
     bool prev_rb_b_ = false, prev_rb_y_ = false;
+    bool prev_lb_start_ = false;
 
     std::atomic<int> policy_cycle_pending_{0};
 

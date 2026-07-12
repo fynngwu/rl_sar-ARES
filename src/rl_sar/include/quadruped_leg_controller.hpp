@@ -48,7 +48,7 @@ public:
         L2_ = 0.21;     // thigh
         L3_ = 0.24;     // shank
 
-        stand_height_ = 0.3;
+        stand_height_ = 0.21;
 
         // Workspace limits (hip frame)
         x_min_ = -0.25;  x_max_ = 0.15;

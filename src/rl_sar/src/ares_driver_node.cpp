@@ -187,13 +187,18 @@ private:
 
     void PublishDriverMode()
     {
+        auto cur = core_->GetMode();
+        if (cur == last_published_mode_)
+            return;
+        last_published_mode_ = cur;
         std_msgs::msg::UInt8 msg;
-        msg.data = static_cast<uint8_t>(core_->GetMode());
+        msg.data = static_cast<uint8_t>(cur);
         driver_mode_pub_->publish(msg);
     }
 
     std::unique_ptr<AresDriverCore> core_;
     DataLogger logger_;
+    DriverMode last_published_mode_ = DriverMode::DISABLE;
 
     std::array<float, AresDriverCore::NUM_JOINTS> cmd_sent_{};
 
