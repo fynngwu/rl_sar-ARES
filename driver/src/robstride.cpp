@@ -246,7 +246,7 @@ RobstrideController::RobstrideController() : running(false) {
                     frame.data[7] = kd_uint & 0xFF;
 
                     if (motor.can_iface) {
-                        motor.can_iface->SendMessage(&frame);
+                        motor.last_send_error = motor.can_iface->SendMessage(&frame);
                     }
                     motor.missed_times++;
                 }
@@ -518,4 +518,12 @@ RobstrideController::MotorError RobstrideController::GetMotorError(int motor_idx
         return {motor_data[motor_idx].error_code, motor_data[motor_idx].pattern};
     }
     return {0, 0};
+}
+
+int RobstrideController::GetLastSendError(int motor_idx) {
+    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
+        return motor_data[motor_idx].last_send_error;
+    }
+    return 0;
 }

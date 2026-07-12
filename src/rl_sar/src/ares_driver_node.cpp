@@ -15,6 +15,7 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <iomanip>
 #include <memory>
@@ -95,7 +96,6 @@ private:
         std::array<float, AresDriverCore::NUM_JOINTS> target;
         for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i) {
             target[i] = msg->position[i];
-            cmd_sent_[i] = msg->position[i];
         }
         core_->SetTopicCommand(target);
     }
@@ -170,18 +170,26 @@ private:
         }
 
         if (logger_.IsOpen()) {
-            LogSnapshot snap;
-            snap.timestamp_sec = this->now().seconds();
-            snap.motor_pos = joint_states.position;
-            snap.motor_vel = joint_states.velocity;
-            snap.motor_torque = joint_states.torque;
-            snap.motor_cmd = cmd_sent_;
-            snap.imu_gyro = imu_data.angular_velocity;
-            snap.imu_gravity = imu_data.projected_gravity;
-            snap.xbox_linear_x = gamepad.linear_x;
-            snap.xbox_linear_y = gamepad.linear_y;
-            snap.xbox_angular_z = gamepad.angular_z;
-            logger_.Log(snap);
+            auto now = std::chrono::steady_clock::now();
+            for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i) {
+                int err = core_->GetLastSendError(i);
+                bool changed = (err != prev_send_error_[i]);
+                bool relog = (err != 0 && (now - last_error_log_[i]) >= std::chrono::seconds(1));
+                if (changed || relog) {
+                    if (err != 0) {
+                        std::ostringstream oss;
+                        oss << "motor[" << i << "] send_error=" << err
+                            << " (" << std::strerror(-err) << ")";
+                        logger_.LogError(oss.str());
+                    } else {
+                        std::ostringstream oss;
+                        oss << "motor[" << i << "] send_error recovered";
+                        logger_.LogWarning(oss.str());
+                    }
+                    last_error_log_[i] = now;
+                }
+                prev_send_error_[i] = err;
+            }
         }
     }
 
@@ -199,8 +207,8 @@ private:
     std::unique_ptr<AresDriverCore> core_;
     DataLogger logger_;
     DriverMode last_published_mode_ = DriverMode::DISABLE;
-
-    std::array<float, AresDriverCore::NUM_JOINTS> cmd_sent_{};
+    std::array<int, AresDriverCore::NUM_JOINTS> prev_send_error_{};
+    std::array<std::chrono::steady_clock::time_point, AresDriverCore::NUM_JOINTS> last_error_log_{};
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;

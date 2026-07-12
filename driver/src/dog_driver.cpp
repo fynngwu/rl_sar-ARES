@@ -207,6 +207,11 @@ bool DogDriver::IsIMUConnected() const {
     return imu_connected_;
 }
 
+int DogDriver::GetLastSendError(int joint_idx) const {
+    if (joint_idx < 0 || joint_idx >= NUM_JOINTS) return -1;
+    return motor_controller_->GetLastSendError(motor_indices_[joint_idx]);
+}
+
 bool DogDriver::IsHealthy() const {
     if (!imu_connected_)
         return false;

@@ -162,6 +162,9 @@ public:
     // Returns true if IMU was successfully opened at construction time.
     bool IsIMUConnected() const;
 
+    // Returns the last CAN send error for a motor joint (-1 on invalid index).
+    int GetLastSendError(int joint_idx) const;
+
     // Returns true ONLY if ALL components are online: IMU connected AND all 12 motors online.
     bool IsHealthy() const;
 

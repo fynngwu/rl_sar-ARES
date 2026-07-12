@@ -66,6 +66,7 @@ public:
 
     JointFeedback GetTopicFeedback() const
     {
+        std::lock_guard<std::mutex> lock(driver_mutex_);
         if (!driver_) return {};
         auto s = driver_->GetJointStates();
         JointFeedback fb;
@@ -79,16 +80,20 @@ public:
 
     ImuData GetImuData() const
     {
+        std::lock_guard<std::mutex> lock(driver_mutex_);
         if (!driver_) return {};
         auto imu = driver_->GetIMUData();
         return {imu.angular_velocity, imu.projected_gravity};
     }
 
-    GamepadCommand PollGamepad()
+    void UpdateGamepadCache()
     {
         GamepadCommand cmd;
         std::lock_guard<std::mutex> lock(gamepad_mutex_);
-        if (!gamepad_ || !gamepad_->IsConnected()) return cmd;
+        if (!gamepad_ || !gamepad_->IsConnected()) {
+            cached_gamepad_ = cmd;
+            return;
+        }
 
         auto now = std::chrono::steady_clock::now();
         float dpad_y = gamepad_->GetAxis(7);
@@ -161,7 +166,13 @@ public:
         cmd.linear_z = height_value_;
         cmd.stride_scale = static_cast<float>(stride_scale_value_);
         cmd.step_height = step_height_value_;
-        return cmd;
+        cached_gamepad_ = cmd;
+    }
+
+    GamepadCommand PollGamepad() const
+    {
+        std::lock_guard<std::mutex> lock(gamepad_mutex_);
+        return cached_gamepad_;
     }
 
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
@@ -205,6 +216,7 @@ public:
 
     bool imu_connected() const
     {
+        std::lock_guard<std::mutex> lock(driver_mutex_);
         return driver_ && driver_->IsIMUConnected();
     }
 
@@ -218,6 +230,13 @@ public:
     {
         std::lock_guard<std::mutex> lock(gamepad_mutex_);
         return gamepad_name_;
+    }
+
+    int GetLastSendError(int joint_idx) const
+    {
+        std::lock_guard<std::mutex> lock(driver_mutex_);
+        if (!driver_) return -1;
+        return driver_->GetLastSendError(joint_idx);
     }
 
     // --- Worker thread ---
@@ -235,8 +254,14 @@ public:
         auto next_tick = std::chrono::steady_clock::now();
 
         while (running_) {
-            CheckDriverConnection();
+            UpdateGamepadCache();
             CheckGamepadConnection();
+
+            if (reconnect_pending_.exchange(false)) {
+                ReconnectCAN();
+            }
+
+            CheckDriverConnection();
 
             DriverMode cur = mode_.load();
             if (cur != prev_mode_) {
@@ -251,7 +276,10 @@ public:
                     std::lock_guard<std::mutex> lock(cmd_mutex_);
                     target = latest_target_;
                 }
-                if (driver_) driver_->SetAllJointPositions(target);
+                {
+                    std::lock_guard<std::mutex> lock(driver_mutex_);
+                    if (driver_) driver_->SetAllJointPositions(target);
+                }
                 next_tick += RL_PERIOD;
                 std::this_thread::sleep_until(next_tick);
                 if (std::chrono::steady_clock::now() > next_tick + RL_PERIOD)
@@ -296,7 +324,10 @@ public:
                     for (int ji = 0; ji < 3; ++ji)
                         cmd[LEG_JOINTS[leg][ji]] = (float)states[leg].q(ji);
 
-                if (driver_) driver_->SetAllJointPositions(cmd);
+                {
+                    std::lock_guard<std::mutex> lock(driver_mutex_);
+                    if (driver_) driver_->SetAllJointPositions(cmd);
+                }
                 next_tick += LOOP_DT;
                 std::this_thread::sleep_until(next_tick);
                 if (std::chrono::steady_clock::now() > next_tick + LOOP_DT)
@@ -309,7 +340,10 @@ public:
                     std::array<float, NUM_JOINTS> target;
                     for (int i = 0; i < NUM_JOINTS; ++i)
                         target[i] = stand_start_pos_[i] * (1.0f - alpha);
-                    if (driver_) driver_->SetAllJointPositions(target);
+                    {
+                        std::lock_guard<std::mutex> lock(driver_mutex_);
+                        if (driver_) driver_->SetAllJointPositions(target);
+                    }
                     stand_step_++;
                 } 
                 next_tick = std::chrono::steady_clock::now();
@@ -324,7 +358,10 @@ public:
             case DriverMode::JUMP: {
                 if (jump_controller_.IsActive()) {
                     auto target = jump_controller_.Update();
-                    if (driver_) driver_->SetAllJointPositions(target);
+                    {
+                        std::lock_guard<std::mutex> lock(driver_mutex_);
+                        if (driver_) driver_->SetAllJointPositions(target);
+                    }
                     if (jump_controller_.IsDone()) {
                         printf("[JUMP] Finished → STAND\n");
                         jump_controller_.Reset();
@@ -340,7 +377,10 @@ public:
             case DriverMode::CLIMB: {
                 if (climb_controller_.IsActive()) {
                     auto target = climb_controller_.Update();
-                    if (driver_) driver_->SetAllJointPositions(target);
+                    {
+                        std::lock_guard<std::mutex> lock(driver_mutex_);
+                        if (driver_) driver_->SetAllJointPositions(target);
+                    }
                     if (climb_controller_.IsDone()) {
                         printf("[CLIMB] Finished → STAND\n");
                         climb_controller_.Stop();
@@ -541,9 +581,14 @@ private:
         if (now - last_reconnect_ < std::chrono::milliseconds(2000)) return;
         last_reconnect_ = now;
 
-        bool imu = imu_connected();
+        bool imu;
+        int motors;
+        {
+            std::lock_guard<std::mutex> lock(driver_mutex_);
+            imu = driver_ && driver_->IsIMUConnected();
+            motors = driver_ ? driver_->OnlineMotorCount() : 0;
+        }
         const char* gp = GamepadStatusStr();
-        int motors = driver_ ? driver_->OnlineMotorCount() : 0;
 
         {
             std::lock_guard<std::mutex> lock(gamepad_mutex_);
@@ -553,9 +598,16 @@ private:
         }
 
         if (!imu) {
+            std::lock_guard<std::mutex> lock(driver_mutex_);
             if (driver_) {
                 printf("[DRIVER] IMU offline, reconnecting...\n");
+                auto t0 = std::chrono::steady_clock::now();
                 driver_->ReconnectIMU();
+                auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t0).count();
+                bool ok = driver_->IsIMUConnected();
+                printf("[DRIVER] IMU reconnect done (%ldms): %s\n",
+                       dt, ok ? "OK" : "FAILED");
             }
         }
 
@@ -573,6 +625,7 @@ private:
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
+        std::lock_guard<std::mutex> lock(driver_mutex_);
         printf("[DRIVER] Destroying old DogDriver and creating new one...\n");
         driver_.reset();
         TryCreateDriver();
@@ -614,63 +667,85 @@ private:
 
     void ApplyMode(DriverMode /*prev*/, DriverMode next)
     {
-        if (!driver_) {
-            printf("[MODE] %s (driver offline)\n", mode_name(next));
-            return;
-        }
         switch (next) {
-        case DriverMode::DISABLE:
+        case DriverMode::DISABLE: {
+            std::lock_guard<std::mutex> lock(driver_mutex_);
+            if (!driver_) { printf("[MODE] DISABLE (driver offline)\n"); return; }
             for (int i = 0; i < NUM_JOINTS; ++i)
                 driver_->SetMITParams(i, 0.0f, 0.0f);
             driver_->DisableAll();
             printf("[MODE] → DISABLED\n");
             break;
+        }
         case DriverMode::STAND: {
             speed_scale_x_ = 1.0f;
-            SetDampingGains();
-            driver_->EnableAll();
+            {
+                std::lock_guard<std::mutex> lock(driver_mutex_);
+                if (!driver_) { printf("[MODE] STAND (driver offline)\n"); return; }
+                SetDampingGains();
+                driver_->EnableAll();
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(15));
-            auto s = driver_->GetJointStates();
-            stand_start_pos_ = s.position;
-            driver_->SetAllJointPositions(stand_start_pos_);
-            ApplyMotorParams(true);
+            {
+                std::lock_guard<std::mutex> lock(driver_mutex_);
+                if (!driver_) { printf("[MODE] STAND (driver offline)\n"); return; }
+                auto s = driver_->GetJointStates();
+                stand_start_pos_ = s.position;
+                driver_->SetAllJointPositions(stand_start_pos_);
+                ApplyMotorParams(true);
+            }
             stand_step_ = 0;
             printf("[MODE] → STAND\n");
             break;
         }
-        case DriverMode::RL:
+        case DriverMode::RL: {
+            std::lock_guard<std::mutex> lock(driver_mutex_);
+            if (!driver_) { printf("[MODE] RL (driver offline)\n"); return; }
             ApplyMotorParams(false);
             driver_->EnableAll();
             printf("[MODE] → RL\n");
             break;
-        case DriverMode::DAMPING:
+        }
+        case DriverMode::DAMPING: {
+            std::lock_guard<std::mutex> lock(driver_mutex_);
+            if (!driver_) { printf("[MODE] DAMPING (driver offline)\n"); return; }
             SetDampingGains();
             driver_->EnableAll();
             printf("[MODE] → DAMPING\n");
             break;
-        case DriverMode::GAIT:
+        }
+        case DriverMode::GAIT: {
+            std::lock_guard<std::mutex> lock(driver_mutex_);
+            if (!driver_) { printf("[MODE] GAIT (driver offline)\n"); return; }
             LoadPositionControlMotion();
             ApplyMotorParams(true);
             driver_->EnableAll();
             gait_controller_.reset();
             printf("[MODE] → GAIT\n");
             break;
-        case DriverMode::JUMP:
+        }
+        case DriverMode::JUMP: {
+            std::lock_guard<std::mutex> lock(driver_mutex_);
+            if (!driver_) { printf("[MODE] JUMP (driver offline)\n"); return; }
             ApplyMotorParams(true);
             driver_->EnableAll();
             jump_controller_.Reset();
             printf("[MODE] → JUMP\n");
             break;
-        case DriverMode::CLIMB:
+        }
+        case DriverMode::CLIMB: {
             if (!climb_controller_.Start()) {
                 printf("[MODE] CLIMB unavailable → STAND\n");
                 mode_ = DriverMode::STAND;
                 break;
             }
+            std::lock_guard<std::mutex> lock(driver_mutex_);
+            if (!driver_) { printf("[MODE] CLIMB (driver offline)\n"); return; }
             ApplyMotorParams(true);
             driver_->EnableAll();
             printf("[MODE] → CLIMB\n");
             break;
+        }
         }
     }
 
@@ -751,8 +826,8 @@ private:
                 mode_ = DriverMode::CLIMB;
             }
         } else if (start_edge) {
-            printf("[GAMEPAD] Start → RECONNECT CAN\n");
-            ReconnectCAN();
+            printf("[GAMEPAD] Start → RECONNECT CAN (pending)\n");
+            reconnect_pending_.store(true);
         }
 
     }
@@ -846,6 +921,10 @@ private:
     bool prev_rb_b_ = false, prev_rb_y_ = false;
     bool prev_start_ = false;
 
+    mutable std::mutex driver_mutex_;
+    std::atomic<bool> reconnect_pending_{false};
+    GamepadCommand cached_gamepad_{};
+
     std::atomic<int> policy_cycle_pending_{0};
 
     mutable std::mutex auto_walk_mutex_;
@@ -893,7 +972,7 @@ AresDriverCore::ImuData AresDriverCore::GetImuData() const
     return impl_->GetImuData();
 }
 
-AresDriverCore::GamepadCommand AresDriverCore::PollGamepad()
+AresDriverCore::GamepadCommand AresDriverCore::PollGamepad() const
 {
     return impl_->PollGamepad();
 }
@@ -947,6 +1026,11 @@ bool AresDriverCore::gamepad_connected() const
 std::string AresDriverCore::gamepad_name() const
 {
     return impl_->gamepad_name();
+}
+
+int AresDriverCore::GetLastSendError(int joint_idx) const
+{
+    return impl_->GetLastSendError(joint_idx);
 }
 
 int AresDriverCore::ConsumeCycleDirection()

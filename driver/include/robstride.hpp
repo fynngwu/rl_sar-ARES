@@ -53,6 +53,7 @@ public:
         uint8_t pattern;
     };
     MotorError GetMotorError(int motor_idx);
+    int GetLastSendError(int motor_idx);
 
     // Callback for CAN RX
     void HandleCANMessage(const struct device *dev, struct can_frame *frame);
@@ -91,6 +92,7 @@ private:
         int missed_times = 0;
         uint8_t error_code = 0;
         uint8_t pattern = 0;
+        int last_send_error = 0;
     };
     std::vector<std::shared_ptr<CANInterface>> can_interfaces;
     std::vector<struct MotorData> motor_data;

@@ -45,7 +45,7 @@ public:
     bool IsAutoWalkEnabled() const;
     JointFeedback GetTopicFeedback() const;
     ImuData GetImuData() const;
-    GamepadCommand PollGamepad();
+    GamepadCommand PollGamepad() const;
 
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                         const std::vector<float>& torque);
@@ -60,6 +60,7 @@ public:
     bool imu_connected() const;
     bool gamepad_connected() const;
     std::string gamepad_name() const;
+    int GetLastSendError(int joint_idx) const;
 
     int ConsumeCycleDirection();
 
