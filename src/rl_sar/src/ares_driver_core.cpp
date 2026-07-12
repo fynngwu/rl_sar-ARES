@@ -712,7 +712,6 @@ private:
         bool rb_a     = rb && a;
         bool rb_b     = rb && b;
         bool rb_y     = rb && y;
-        bool lb_start = lb && start;
 
         bool rb_x_edge     = rb_x     && !prev_rb_x_;
         bool lb_rb_edge    = lb_rb    && !prev_lb_rb_;
@@ -723,7 +722,7 @@ private:
         bool rb_a_edge     = rb_a     && !prev_rb_a_;
         bool rb_b_edge     = rb_b     && !prev_rb_b_;
         bool rb_y_edge     = rb_y     && !prev_rb_y_;
-        bool lb_start_edge = lb_start && !prev_lb_start_;
+        bool start_edge    = start    && !prev_start_;
 
         prev_rb_x_     = rb_x;
         prev_lb_rb_    = lb_rb;
@@ -734,7 +733,7 @@ private:
         prev_rb_a_     = rb_a;
         prev_rb_b_     = rb_b;
         prev_rb_y_     = rb_y;
-        prev_lb_start_ = lb_start;
+        prev_start_    = start;
 
         if (rb_x_edge) {
             printf("[GAMEPAD] RB+X → DISABLE\n");
@@ -746,15 +745,11 @@ private:
             printf("[GAMEPAD] LB+A → STAND\n");
             mode_ = DriverMode::STAND;
         } else if (lb_y_edge) {
-            if (mode_.load() == DriverMode::STAND) {
-                printf("[GAMEPAD] LB+Y → RL\n");
-                mode_ = DriverMode::RL;
-            }
+            printf("[GAMEPAD] LB+Y → RL\n");
+            mode_ = DriverMode::RL;
         } else if (lb_b_edge) {
-            if (mode_.load() == DriverMode::STAND) {
-                printf("[GAMEPAD] LB+B → GAIT\n");
-                mode_ = DriverMode::GAIT;
-            }
+            printf("[GAMEPAD] LB+B → GAIT\n");
+            mode_ = DriverMode::GAIT;
         } else if (rb_a_edge) {
             if (mode_.load() == DriverMode::STAND) {
                 printf("[GAMEPAD] RB+A → JUMP\n");
@@ -771,8 +766,8 @@ private:
                 printf("[GAMEPAD] RB+Y → CLIMB\n");
                 mode_ = DriverMode::CLIMB;
             }
-        } else if (lb_start_edge) {
-            printf("[GAMEPAD] LB+Start → RECONNECT CAN\n");
+        } else if (start_edge) {
+            printf("[GAMEPAD] Start → RECONNECT CAN\n");
             ReconnectCAN();
         }
 
@@ -865,7 +860,7 @@ private:
     bool prev_lb_a_ = false, prev_lb_b_ = false, prev_lb_y_ = false, prev_lb_x_ = false;
     bool prev_rb_a_ = false;
     bool prev_rb_b_ = false, prev_rb_y_ = false;
-    bool prev_lb_start_ = false;
+    bool prev_start_ = false;
 
     std::atomic<int> policy_cycle_pending_{0};
 

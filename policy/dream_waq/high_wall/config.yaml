@@ -25,8 +25,8 @@ dream_waq/high_wall:
   gravity_vec_scale: 1.0
 
   # PD gains — stiffer for obstacle crossing
-  fixed_kp: 24
-  fixed_kd: 1.0
+  fixed_kp: 20
+  fixed_kd: 1.5
   torque_limits: 17
 
   # Position limits — wider range for high steps
@@ -53,9 +53,9 @@ dream_waq/high_wall:
   # Driver config
   gamepad_scale: 1.0
   gamepad_limits:
-    linear_x: [-0.0, 1.0]
+    linear_x: [-0.0, 0.8]
     linear_y: [-0.0, 0.0]
-    angular_z: [-1.5, 1.5]
+    angular_z: [-1.0, 1.0]
 
   # Joint mapping
   topic_to_driver: [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]

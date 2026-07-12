@@ -24,8 +24,8 @@ dream_waq/walking:
   gravity_vec_scale: 1.0
 
   # PD gains
-  fixed_kp: 25
-  fixed_kd: 0.8
+  fixed_kp: 20
+  fixed_kd: 1.5
   torque_limits: 17
 
   # Position limits
