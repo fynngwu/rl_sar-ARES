@@ -170,12 +170,9 @@ private:
         }
 
         if (logger_.IsOpen()) {
-            auto now = std::chrono::steady_clock::now();
             for (int i = 0; i < AresDriverCore::NUM_JOINTS; ++i) {
                 int err = core_->GetLastSendError(i);
-                bool changed = (err != prev_send_error_[i]);
-                bool relog = (err != 0 && (now - last_error_log_[i]) >= std::chrono::seconds(1));
-                if (changed || relog) {
+                if (err != prev_send_error_[i]) {
                     if (err != 0) {
                         std::ostringstream oss;
                         oss << "motor[" << i << "] send_error=" << err
@@ -186,7 +183,6 @@ private:
                         oss << "motor[" << i << "] send_error recovered";
                         logger_.LogWarning(oss.str());
                     }
-                    last_error_log_[i] = now;
                 }
                 prev_send_error_[i] = err;
             }
@@ -208,7 +204,6 @@ private:
     DataLogger logger_;
     DriverMode last_published_mode_ = DriverMode::DISABLE;
     std::array<int, AresDriverCore::NUM_JOINTS> prev_send_error_{};
-    std::array<std::chrono::steady_clock::time_point, AresDriverCore::NUM_JOINTS> last_error_log_{};
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;

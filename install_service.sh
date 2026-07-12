@@ -4,7 +4,6 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="ares_rl.service"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
-DEFAULT_POLICY="dogv2_cts/cts"
 REAL_USER="${SUDO_USER:-$USER}"
 REAL_HOME="$(eval echo "~${REAL_USER}")"
 BASHRC="${REAL_HOME}/.bashrc"
@@ -60,49 +59,28 @@ remove_aliases() {
 
 usage() {
     echo "Usage:"
-    echo "  sudo ./install_service.sh                     # show current config"
-    echo "  sudo ./install_service.sh [policy]            # install / update"
+    echo "  sudo ./install_service.sh                     # install / update"
     echo "  sudo ./install_service.sh --remove            # remove service + aliases"
-    echo ""
-    echo "Example:"
-    echo "  sudo ./install_service.sh ${DEFAULT_POLICY}"
     exit 0
 }
 
-case "${1:-}" in
-    --help|-h) usage ;;
-    --remove)
-        if [[ "${EUID}" -ne 0 ]]; then
-            echo "This script must be run as root (sudo)." >&2
-            exit 1
-        fi
-        systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
-        systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
-        rm -f "${SERVICE_PATH}"
-        systemctl daemon-reload
-        remove_aliases
-        echo "[install_service] Removed ${SERVICE_NAME} and aliases"
-        exit 0
-        ;;
-esac
-
-if [[ -z "${1:-}" ]]; then
-    if [[ -f "${SERVICE_PATH}" ]]; then
-        echo "[install_service] Current config (${SERVICE_NAME}):"
-        grep -E "ExecStart=|ExecStartPre=|Description=" "${SERVICE_PATH}" | sed 's/^[[:space:]]*//'
-        echo ""
-        echo "Status: $(systemctl is-enabled "${SERVICE_NAME}" 2>/dev/null || echo 'unknown')"
-        echo ""
-        echo "To change:  sudo $0 [policy]"
-        echo "To remove:  sudo $0 --remove"
-    else
-        echo "[install_service] ${SERVICE_NAME} is not installed."
-        echo "  sudo $0 ${DEFAULT_POLICY}"
-    fi
-    exit 0
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    usage
 fi
 
-POLICY="${1:-$DEFAULT_POLICY}"
+if [[ "${1:-}" == "--remove" ]]; then
+    if [[ "${EUID}" -ne 0 ]]; then
+        echo "This script must be run as root (sudo)." >&2
+        exit 1
+    fi
+    systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+    systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
+    rm -f "${SERVICE_PATH}"
+    systemctl daemon-reload
+    remove_aliases
+    echo "[install_service] Removed ${SERVICE_NAME} and aliases"
+    exit 0
+fi
 
 if [[ "${EUID}" -ne 0 ]]; then
     echo "This script must be run as root (sudo)." >&2
@@ -111,13 +89,13 @@ fi
 
 cat > "${SERVICE_PATH}" <<SERVICE_EOF
 [Unit]
-Description=ARES RL Robot Controller (${POLICY})
+Description=ARES RL Robot Controller
 After=network.target network-online.target
 
 [Service]
 Type=simple
 ExecStartPre=${REAL_HOME}/.local/bin/start
-ExecStart=${PROJECT_ROOT}/run.sh ${POLICY}
+ExecStart=${PROJECT_ROOT}/run.sh
 User=${REAL_USER}
 Environment=HOME=${REAL_HOME}
 Restart=no
@@ -130,11 +108,11 @@ SERVICE_EOF
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
 
-install_aliases "${POLICY}"
+install_aliases
 
 echo ""
 echo "[install_service] Installed ${SERVICE_NAME}"
-echo "    ExecStart: ${PROJECT_ROOT}/run.sh ${POLICY}"
+echo "    ExecStart: ${PROJECT_ROOT}/run.sh"
 echo "    ExecStartPre: ${HOME}/.local/bin/start"
 echo ""
 echo "Start now:  sudo systemctl start ${SERVICE_NAME}"
@@ -143,7 +121,3 @@ echo "Status:     sudo systemctl status ${SERVICE_NAME}"
 echo "Logs:       journalctl -u ${SERVICE_NAME} -f"
 echo ""
 echo "Aliases installed: ares-start, ares-stop, ares-restart, ares-status, ares-logs"
-echo ""
-echo "To change later, re-run with different args:"
-echo "  sudo $0 ${DEFAULT_POLICY}"
-echo "  sudo $0 --remove"

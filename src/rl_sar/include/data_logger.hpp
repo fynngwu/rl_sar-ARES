@@ -18,7 +18,7 @@ public:
     static constexpr size_t kRingSize = 4096;
 
     explicit DataLogger(const std::string& dir = "logs")
-        : write_idx_(0), read_idx_(0), running_(true)
+        : read_idx_(0), queue_size_(0), running_(true)
     {
         auto now = std::chrono::system_clock::now();
         auto tt = std::chrono::system_clock::to_time_t(now);
@@ -80,7 +80,7 @@ private:
 
         std::lock_guard<std::mutex> lock(queue_mutex_);
         if (queue_size_ >= kRingSize) return;
-        auto& e = ring_[(write_idx_ + queue_size_) % kRingSize];
+        auto& e = ring_[(read_idx_ + queue_size_) % kRingSize];
         e.timestamp_sec = ts;
         e.level = level;
         e.message = msg;
@@ -136,7 +136,6 @@ private:
     }
 
     std::array<LogEntry, kRingSize> ring_;
-    size_t write_idx_;
     size_t read_idx_;
     size_t queue_size_ = 0;
     std::mutex queue_mutex_;
