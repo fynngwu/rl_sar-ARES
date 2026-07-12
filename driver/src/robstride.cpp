@@ -199,7 +199,7 @@ RobstrideController::RobstrideController() : running(false) {
         auto next = std::chrono::steady_clock::now();
         while (running) {
             {
-                std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+                std::unique_lock<std::recursive_mutex> lock(motor_data_mutex);
                 for (auto& motor : motor_data) {
                     if (!motor.enabled) continue;
 
@@ -245,10 +245,14 @@ RobstrideController::RobstrideController() : running(false) {
                     frame.data[6] = (kd_uint >> 8) & 0xFF;
                     frame.data[7] = kd_uint & 0xFF;
 
-                    if (motor.can_iface) {
-                        motor.last_send_error = motor.can_iface->SendMessage(&frame);
-                    }
+                    auto can_iface = motor.can_iface;
                     motor.missed_times++;
+                    if (can_iface) {
+                        lock.unlock();
+                        int send_error = can_iface->SendMessage(&frame);
+                        lock.lock();
+                        motor.last_send_error = send_error;
+                    }
                 }
             }
             next += std::chrono::milliseconds(5);
@@ -358,32 +362,34 @@ int RobstrideController::SendMITCommand(int motor_idx, float pos) {
 }
 
 int RobstrideController::EnableMotor(int motor_idx) {
-    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    std::unique_lock<std::recursive_mutex> lock(motor_data_mutex);
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
         auto& motor = motor_data[motor_idx];
         motor.enabled = true;
+        auto can_iface = motor.can_iface;
+        int motor_id = motor.motor_id;
+        int host_id = motor.host_id;
 
         struct can_frame frame;
         std::memset(&frame, 0, sizeof(frame));
 
-        uint32_t id = (motor.motor_id & 0xFF);
-        id |= ((motor.host_id & 0xFF) << 8);
+        uint32_t id = (motor_id & 0xFF);
+        id |= ((host_id & 0xFF) << 8);
         id |= (COMM_STOP << 24);
         frame.can_id = id | CAN_EFF_FLAG;
         frame.can_dlc = 8;
         frame.data[0] = 0x01;
-        if (motor.can_iface) {
-            motor.can_iface->SendMessage(&frame);
-        }
+        if (can_iface) {
+            lock.unlock();
+            can_iface->SendMessage(&frame);
 
-        std::memset(&frame, 0, sizeof(frame));
-        id = (motor.motor_id & 0xFF);
-        id |= ((motor.host_id & 0xFF) << 8);
-        id |= (COMM_ENABLE << 24);
-        frame.can_id = id | CAN_EFF_FLAG;
-        frame.can_dlc = 8;
-        if (motor.can_iface) {
-            motor.can_iface->SendMessage(&frame);
+            std::memset(&frame, 0, sizeof(frame));
+            id = (motor_id & 0xFF);
+            id |= ((host_id & 0xFF) << 8);
+            id |= (COMM_ENABLE << 24);
+            frame.can_id = id | CAN_EFF_FLAG;
+            frame.can_dlc = 8;
+            can_iface->SendMessage(&frame);
         }
         return 0;
     }
@@ -399,10 +405,11 @@ bool RobstrideController::IsMotorOnline(int motor_idx) {
 }
 
 int RobstrideController::DisableMotor(int motor_idx) {
-    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    std::unique_lock<std::recursive_mutex> lock(motor_data_mutex);
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
         auto& motor = motor_data[motor_idx];
         motor.enabled = false;
+        auto can_iface = motor.can_iface;
         
         struct can_frame frame;
         std::memset(&frame, 0, sizeof(frame));
@@ -415,8 +422,9 @@ int RobstrideController::DisableMotor(int motor_idx) {
         frame.can_id = id | CAN_EFF_FLAG;
         frame.can_dlc = 8;
         
-        if (motor.can_iface) {
-            motor.can_iface->SendMessage(&frame);
+        if (can_iface) {
+            lock.unlock();
+            can_iface->SendMessage(&frame);
         }
         return 0;
     }
@@ -424,10 +432,11 @@ int RobstrideController::DisableMotor(int motor_idx) {
 }
 
 int RobstrideController::ClearMotor(int motor_idx) {
-    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    std::unique_lock<std::recursive_mutex> lock(motor_data_mutex);
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
         auto& motor = motor_data[motor_idx];
         motor.enabled = false;
+        auto can_iface = motor.can_iface;
         
         struct can_frame frame;
         std::memset(&frame, 0, sizeof(frame));
@@ -441,8 +450,9 @@ int RobstrideController::ClearMotor(int motor_idx) {
         frame.can_dlc = 8;
         frame.data[0] = 0x01;
         
-        if (motor.can_iface) {
-            motor.can_iface->SendMessage(&frame);
+        if (can_iface) {
+            lock.unlock();
+            can_iface->SendMessage(&frame);
         }
         return 0;
     }
@@ -455,9 +465,10 @@ int RobstrideController::EnableAutoReport(int motor_idx) {
 }
 
 int RobstrideController::DisableAutoReport(int motor_idx) {
-    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    std::unique_lock<std::recursive_mutex> lock(motor_data_mutex);
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
         auto& motor = motor_data[motor_idx];
+        auto can_iface = motor.can_iface;
         
         struct can_frame frame;
         std::memset(&frame, 0, sizeof(frame));
@@ -479,8 +490,9 @@ int RobstrideController::DisableAutoReport(int motor_idx) {
 		frame.data[6] = 0x00;
 		frame.data[7] = 0x00;
         
-        if (motor.can_iface) {
-            motor.can_iface->SendMessage(&frame);
+        if (can_iface) {
+            lock.unlock();
+            can_iface->SendMessage(&frame);
         }
         return 0;
     }
@@ -488,9 +500,10 @@ int RobstrideController::DisableAutoReport(int motor_idx) {
 }
 
 int RobstrideController::SetZero(int motor_idx){
-    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    std::unique_lock<std::recursive_mutex> lock(motor_data_mutex);
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {
         auto& motor = motor_data[motor_idx];      
+        auto can_iface = motor.can_iface;
         struct can_frame frame;
         std::memset(&frame, 0, sizeof(frame));
         
@@ -504,8 +517,9 @@ int RobstrideController::SetZero(int motor_idx){
         
         frame.data[0] = 0x01;
 
-        if (motor.can_iface) {
-            motor.can_iface->SendMessage(&frame);
+        if (can_iface) {
+            lock.unlock();
+            can_iface->SendMessage(&frame);
         }
         return 0;
     }
