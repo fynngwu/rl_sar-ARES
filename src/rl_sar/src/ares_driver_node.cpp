@@ -19,6 +19,7 @@
 #include <functional>
 #include <iomanip>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -154,6 +155,13 @@ private:
             twist.linear.z = gamepad.linear_z;
             twist.angular.z = gamepad.angular_z;
             xbox_vel_pub_->publish(twist);
+
+            auto now = std::chrono::steady_clock::now();
+            if (!last_cmd_print_ || std::chrono::duration<float>(now - *last_cmd_print_).count() >= 1.0f) {
+                last_cmd_print_ = now;
+                printf("[CMD] vx=%.3f vy=%.3f wz=%.3f h=%.3f\n",
+                       gamepad.linear_x, gamepad.linear_y, gamepad.angular_z, gamepad.linear_z);
+            }
         }
 
         if (logger_.IsOpen()) {
@@ -191,6 +199,7 @@ private:
     DataLogger logger_;
     DriverMode last_published_mode_ = DriverMode::DISABLE;
     std::array<int, AresDriverCore::NUM_JOINTS> prev_send_error_{};
+    std::optional<std::chrono::steady_clock::time_point> last_cmd_print_;
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motor_feedback_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
