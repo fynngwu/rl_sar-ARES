@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-DEFAULT_CSV = Path("tools/kpkd_response_test/logs/dream_waq_step_response.csv")
+DEFAULT_CSV = Path("tools/kpkd_response_test/logs/step_response.csv")
 
 JOINT_NAMES = [
     "LF HipA", "LR HipA", "RF HipA", "RR HipA",

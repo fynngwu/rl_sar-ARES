@@ -12,9 +12,6 @@
 #include <iostream>
 #include <string>
 #include <thread>
-#include <vector>
-
-#include <yaml-cpp/yaml.h>
 
 namespace {
 
@@ -23,50 +20,16 @@ constexpr double kStepRad = 0.3;
 constexpr double kRecordSec = 5.0;
 constexpr double kRateHz = 100.0;
 constexpr double kStandSec = 2.0;
-constexpr const char* kConfigPath = "policy/dream_waq/dream_waq/config.yaml";
-constexpr const char* kPolicyKey = "dream_waq/dream_waq";
-constexpr const char* kOutputCsv = "tools/kpkd_response_test/logs/dream_waq_step_response.csv";
+constexpr const char* kOutputCsv = "tools/kpkd_response_test/logs/step_response.csv";
+constexpr float kTestKp = 40.0f;
+constexpr float kTestKd = 2.0f;
+constexpr float kTorqueLimit = 30.0f;
 
 std::atomic<bool> g_running{true};
 
 void SignalHandler(int)
 {
     g_running = false;
-}
-
-std::vector<float> LoadScalarOrArray(const YAML::Node& node, size_t n)
-{
-    if (!node)
-        throw std::runtime_error("missing YAML node");
-    if (node.IsSequence()) {
-        std::vector<float> values;
-        for (const auto& item : node)
-            values.push_back(item.as<float>());
-        if (values.size() != n)
-            throw std::runtime_error("YAML array length is not 12");
-        return values;
-    }
-    return std::vector<float>(n, node.as<float>());
-}
-
-struct MotorParams {
-    std::vector<float> kp;
-    std::vector<float> kd;
-    std::vector<float> torque;
-};
-
-MotorParams LoadMotorParams()
-{
-    YAML::Node root = YAML::LoadFile(kConfigPath);
-    YAML::Node rc = root[kPolicyKey];
-    if (!rc)
-        throw std::runtime_error(std::string("missing key: ") + kPolicyKey);
-
-    MotorParams p;
-    p.kp = LoadScalarOrArray(rc["fixed_kp"], kNumJoints);
-    p.kd = LoadScalarOrArray(rc["fixed_kd"], kNumJoints);
-    p.torque = LoadScalarOrArray(rc["torque_limits"], kNumJoints);
-    return p;
 }
 
 void WriteHeader(std::ofstream& out)
@@ -91,14 +54,6 @@ void WriteSample(std::ofstream& out, double t,
     out << '\n';
 }
 
-void PrintVector(const char* name, const std::vector<float>& values)
-{
-    std::printf("%s: [", name);
-    for (size_t i = 0; i < values.size(); ++i)
-        std::printf("%s%.3f", i ? ", " : "", values[i]);
-    std::printf("]\n");
-}
-
 void PrintJointTable(const DogDriver::JointState& initial,
                      const std::array<float, kNumJoints>& target)
 {
@@ -110,12 +65,12 @@ void PrintJointTable(const DogDriver::JointState& initial,
     }
 }
 
-void ApplyMotorParams(DogDriver& driver, const MotorParams& params)
+void ApplyMotorParams(DogDriver& driver)
 {
     for (int i = 0; i < kNumJoints; ++i) {
         driver.EnableAutoReport(i);
-        driver.SetMITParams(i, params.kp[i], params.kd[i]);
-        driver.SetTorqueLimit(i, params.torque[i]);
+        driver.SetMITParams(i, kTestKp, kTestKd);
+        driver.SetTorqueLimit(i, kTorqueLimit);
     }
 }
 
@@ -125,7 +80,7 @@ void ApplyDamping(DogDriver& driver)
         driver.SetMITParams(i, 0.0f, 4.0f);
 }
 
-void MoveToStand(DogDriver& driver, const MotorParams& params)
+void MoveToStand(DogDriver& driver)
 {
     ApplyDamping(driver);
     driver.EnableAll();
@@ -148,7 +103,7 @@ void MoveToStand(DogDriver& driver, const MotorParams& params)
         std::this_thread::sleep_until(next_tick += std::chrono::duration_cast<std::chrono::steady_clock::duration>(dt));
     }
 
-    ApplyMotorParams(driver, params);
+    ApplyMotorParams(driver);
     driver.SetAllJointPositions(stand_target);
 }
 
@@ -163,7 +118,7 @@ bool WaitForBButton(DogDriver& driver)
         std::printf("No gamepad at /dev/input/js0. Waiting anyway; connect gamepad or Ctrl-C.\n");
     else
         std::printf("Gamepad connected: %s\n", gamepad.GetName().c_str());
-    std::printf("Press B to start 0.3 rad step response recording.\n");
+    std::printf("Press B to start %.3f rad step response recording.\n", kStepRad);
 
     bool prev_b = false;
     while (g_running) {
@@ -186,14 +141,6 @@ int main()
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
-    MotorParams params;
-    try {
-        params = LoadMotorParams();
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "Failed to load %s: %s\n", kConfigPath, e.what());
-        return 1;
-    }
-
     std::filesystem::create_directories(std::filesystem::path(kOutputCsv).parent_path());
     std::ofstream csv(kOutputCsv);
     if (!csv.is_open()) {
@@ -202,19 +149,15 @@ int main()
     }
     WriteHeader(csv);
 
-    std::printf("KP/KD response test\n");
-    std::printf("Config: %s [%s]\n", kConfigPath, kPolicyKey);
-    PrintVector("fixed_kp", params.kp);
-    PrintVector("fixed_kd", params.kd);
-    PrintVector("torque_limits", params.torque);
-    std::printf("Command: target = initial_position + %.3f rad, record %.1f s at %.1f Hz\n",
-                kStepRad, kRecordSec, kRateHz);
+    std::printf("Step response test\n");
+    std::printf("kp=%.1f  kd=%.1f  target=%.3f rad  record=%.1f s  rate=%.0f Hz\n",
+                kTestKp, kTestKd, kStepRad, kRecordSec, kRateHz);
     std::printf("Output: %s\n\n", kOutputCsv);
 
     std::printf("Initializing DogDriver...\n");
     DogDriver driver;
     driver.EnableAll();
-    ApplyMotorParams(driver, params);
+    ApplyMotorParams(driver);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     int online = driver.OnlineMotorCount();
@@ -225,7 +168,7 @@ int main()
         return 1;
     }
 
-    MoveToStand(driver, params);
+    MoveToStand(driver);
     if (!WaitForBButton(driver)) {
         std::printf("Aborted before test start.\n");
         driver.DisableAll();
@@ -235,7 +178,7 @@ int main()
     DogDriver::JointState initial = driver.GetJointStates();
     std::array<float, kNumJoints> step_target{};
     for (int i = 0; i < kNumJoints; ++i)
-        step_target[i] = initial.position[i] + static_cast<float>(kStepRad);
+        step_target[i] = static_cast<float>(kStepRad);
 
     PrintJointTable(initial, step_target);
     std::printf("\nB pressed. Sending step now. Press Ctrl-C to abort.\n");
