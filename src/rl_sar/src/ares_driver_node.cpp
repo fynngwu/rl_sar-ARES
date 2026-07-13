@@ -65,10 +65,6 @@ public:
             "/motor_param_update", motor_param_qos,
             std::bind(&AresDriverNode::MotorParamCallback, this, std::placeholders::_1));
 
-        xbox_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
-            "/xbox_vel", 10,
-            std::bind(&AresDriverNode::XboxVelCallback, this, std::placeholders::_1));
-
         feedback_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(10),
             std::bind(&AresDriverNode::FeedbackTimerCallback, this));
@@ -115,15 +111,6 @@ private:
         RCLCPP_INFO(this->get_logger(), "Motor params updated from /motor_param_update");
     }
 
-    void XboxVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
-    {
-        core_->SetTopicVelocity(
-            static_cast<float>(msg->linear.x),
-            static_cast<float>(msg->linear.y),
-            static_cast<float>(msg->angular.z),
-            static_cast<float>(msg->linear.z));
-    }
-
     void FeedbackTimerCallback()
     {
         PublishDriverMode();
@@ -160,7 +147,7 @@ private:
         imu_pub_->publish(imu_msg);
 
         auto gamepad = core_->PollGamepad();
-        if (!core_->IsAutoWalkEnabled() && gamepad.connected) {
+        if (gamepad.connected) {
             geometry_msgs::msg::Twist twist;
             twist.linear.x = gamepad.linear_x;
             twist.linear.y = gamepad.linear_y;
@@ -212,7 +199,6 @@ private:
     rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr policy_cycle_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_command_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
-    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr xbox_vel_sub_;
     rclcpp::TimerBase::SharedPtr feedback_timer_;
 };
 

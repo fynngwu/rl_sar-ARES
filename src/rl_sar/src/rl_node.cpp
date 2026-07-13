@@ -142,7 +142,8 @@ private:
             RCLCPP_INFO(get_logger(), "Driver → RL: starting inference (%s)", selected_policy_.c_str());
         } else if (new_mode != DriverMode::RL && driver_mode_ == DriverMode::RL) {
             rl_.SetState(AresRL::State::STOPPED);
-            RCLCPP_INFO(get_logger(), "Driver left RL mode");
+            InitRL(selected_policy_);
+            RCLCPP_INFO(get_logger(), "Driver left RL mode — re-init");
         }
 
         driver_mode_ = new_mode;

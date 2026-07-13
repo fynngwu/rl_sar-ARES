@@ -38,9 +38,7 @@
 Driver ──/driver_mode──→ RL Node
 Driver ──/motor_feedback──→ RL Node
 Driver ──/imu/data──→ RL Node
-Driver ──/xbox_vel──→ RL Node (gamepad, auto-walk off 时)
-外部 ──/xbox_vel──→ Driver (auto-walk on 时用于 GAIT)
-外部 ──/xbox_vel──→ RL Node (RL 模式下用于推理)
+Driver ──/xbox_vel──→ RL Node (gamepad)
 RL Node ──/motor_command──→ Driver (仅 RL 模式)
 ```
 

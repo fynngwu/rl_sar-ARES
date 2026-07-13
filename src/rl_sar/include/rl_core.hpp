@@ -109,6 +109,7 @@ private:
     std::ofstream csv_file_;
 
     std::vector<float> snap_joint_pos_, snap_joint_vel_, snap_joint_torque_;
+    std::vector<float> last_commands_;
 
     std::mutex model_mutex_;
 };

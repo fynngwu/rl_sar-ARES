@@ -234,7 +234,9 @@ void AresRL::RunModel(const float imu_gyro[3], const float imu_gravity[3],
 
     obs_.ang_vel     = {imu_gyro[0], imu_gyro[1], imu_gyro[2]};
     obs_.gravity_vec = {imu_gravity[0], imu_gravity[1], imu_gravity[2]};
-    obs_.commands.assign(commands, commands + std::min(num_commands, static_cast<int>(commands_scale_.size())));
+    int nc = std::min(num_commands, static_cast<int>(commands_scale_.size()));
+    obs_.commands.assign(commands, commands + nc);
+    last_commands_.assign(commands, commands + nc);
     for (int i = 0; i < num_of_dofs_; ++i) {
         obs_.dof_pos[i] = joint_pos[i];
         obs_.dof_vel[i] = joint_vel[i];
@@ -477,6 +479,10 @@ void AresRL::PrintStatus()
         printf("%-8s [%s] inf:%.1fms #%d  [0]=S [1]=H [2]=C\n",
                current_state_ == State::STOPPED ? "STOPPED" : "RUNNING",
                policy_name_.c_str(), inference_time_ms_, inference_count_);
+        printf("Cmd: vx=%.3f  vy=%.3f  wz=%.3f\n",
+               last_commands_.size() > 0 ? last_commands_[0] : 0.0f,
+               last_commands_.size() > 1 ? last_commands_[1] : 0.0f,
+               last_commands_.size() > 2 ? last_commands_[2] : 0.0f);
         printf("Joint          DofPos       DofVel       DofTrq       Target\n");
         printf("-------------------------------------------------------------------\n");
         for (int i = 0; i < num_of_dofs_; ++i) {

@@ -53,17 +53,6 @@ public:
         latest_target_ = target;
     }
 
-    void SetTopicVelocity(float linear_x, float linear_y, float angular_z, float height)
-    {
-        std::lock_guard<std::mutex> lock(auto_walk_mutex_);
-        auto_walk_linear_x_ = linear_x;
-        auto_walk_linear_y_ = linear_y;
-        auto_walk_angular_z_ = angular_z;
-        auto_walk_height_ = height;
-    }
-
-    bool IsAutoWalkEnabled() const { return auto_walk_enabled_.load(); }
-
     JointFeedback GetTopicFeedback() const
     {
         std::lock_guard<std::mutex> lock(driver_mutex_);
@@ -287,24 +276,13 @@ public:
                 break;
             }
             case DriverMode::GAIT: {
-                float lx, ly, az;
-                float height_cmd = 0.0f;
-                float stride_cmd = (float)stride_scale_value_;
-                if (auto_walk_enabled_.load()) {
-                    std::lock_guard<std::mutex> lock(auto_walk_mutex_);
-                    lx = auto_walk_linear_x_;
-                    ly = auto_walk_linear_y_;
-                    az = auto_walk_angular_z_;
-                    height_cmd = auto_walk_height_;
-                } else {
-                    GamepadCommand gp = PollGamepad();
-                    lx = gp.linear_x;
-                    ly = gp.linear_y;
-                    az = gp.angular_z;
-                    height_cmd = gp.linear_z;
-                    stride_cmd = gp.stride_scale;
-                    gait_params_.step_height = gp.step_height;
-                }
+                GamepadCommand gp = PollGamepad();
+                float lx = gp.linear_x;
+                float ly = gp.linear_y;
+                float az = gp.angular_z;
+                float height_cmd = gp.linear_z;
+                float stride_cmd = gp.stride_scale;
+                gait_params_.step_height = gp.step_height;
 
                 GaitCommand gait_cmd{lx, ly, az};
                 if (height_cmd != 0.0f)
@@ -592,9 +570,8 @@ private:
 
         {
             std::lock_guard<std::mutex> lock(gamepad_mutex_);
-            printf("[STATUS] IMU=%s, Motors=%d/%d, Gamepad=%s, Height=%.3f, Cmd=%s\n",
-                   imu ? "yes" : "no", motors, NUM_JOINTS, gp, height_value_,
-                   auto_walk_enabled_.load() ? "TOPIC" : "GAMEPAD");
+            printf("[STATUS] IMU=%s, Motors=%d/%d, Gamepad=%s, Height=%.3f\n",
+                   imu ? "yes" : "no", motors, NUM_JOINTS, gp, height_value_);
         }
 
         if (!imu) {
@@ -814,10 +791,6 @@ private:
                 printf("[GAMEPAD] RB+A → JUMP\n");
                 mode_ = DriverMode::JUMP;
             }
-        } else if (lb_x_edge) {
-            bool old = auto_walk_enabled_.load();
-            auto_walk_enabled_.store(!old);
-            printf("[GAMEPAD] LB+X → AUTO-WALK: %s\n", !old ? "TOPIC" : "GAMEPAD");
         } else if (rb_b_edge) {
             CyclePolicy(+1);
         } else if (rb_y_edge) {
@@ -927,12 +900,6 @@ private:
 
     std::atomic<int> policy_cycle_pending_{0};
 
-    mutable std::mutex auto_walk_mutex_;
-    float auto_walk_linear_x_ = 0.0f;
-    float auto_walk_linear_y_ = 0.0f;
-    float auto_walk_angular_z_ = 0.0f;
-    float auto_walk_height_ = 0.0f;
-    std::atomic<bool> auto_walk_enabled_{false};
     std::chrono::steady_clock::time_point last_gait_print_{};
 
     QuadrupedLegController gait_controller_;
@@ -950,16 +917,6 @@ AresDriverCore::~AresDriverCore() = default;
 void AresDriverCore::SetTopicCommand(const std::array<float, NUM_JOINTS>& topic_target)
 {
     impl_->SetTopicCommand(topic_target);
-}
-
-void AresDriverCore::SetTopicVelocity(float linear_x, float linear_y, float angular_z, float height)
-{
-    impl_->SetTopicVelocity(linear_x, linear_y, angular_z, height);
-}
-
-bool AresDriverCore::IsAutoWalkEnabled() const
-{
-    return impl_->IsAutoWalkEnabled();
 }
 
 AresDriverCore::JointFeedback AresDriverCore::GetTopicFeedback() const

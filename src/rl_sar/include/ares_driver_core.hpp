@@ -41,8 +41,6 @@ public:
     AresDriverCore& operator=(const AresDriverCore&) = delete;
 
     void SetTopicCommand(const std::array<float, NUM_JOINTS>& topic_target);
-    void SetTopicVelocity(float linear_x, float linear_y, float angular_z, float height);
-    bool IsAutoWalkEnabled() const;
     JointFeedback GetTopicFeedback() const;
     ImuData GetImuData() const;
     GamepadCommand PollGamepad() const;
