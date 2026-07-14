@@ -176,6 +176,20 @@ private:
 
         if (!ready) return;
 
+        if (last_imu_stamp_) {
+            double dt = (this->now() - *last_imu_stamp_).seconds();
+            if (dt > 0.5) {
+                if (!imu_stale_warned_) {
+                    RCLCPP_WARN(get_logger(), "IMU stale (%.2fs > 0.5s), using default values", dt);
+                    imu_stale_warned_ = true;
+                }
+                imu_gyro    = {0.0f, 0.0f, 0.0f};
+                imu_gravity = {0.0f, 0.0f, -1.0f};
+            } else {
+                imu_stale_warned_ = false;
+            }
+        }
+
         rl_.RunModel(imu_gyro.data(), imu_gravity.data(), commands.data(),
                      commands.size(), joint_pos.data(), joint_vel.data(),
                      joint_torque.data());
@@ -261,6 +275,7 @@ private:
         imu_gravity_[1] = msg->linear_acceleration.y;
         imu_gravity_[2] = msg->linear_acceleration.z;
         imu_received_   = true;
+        last_imu_stamp_ = this->now();
         if (!all_sensors_ready_ && motor_feedback_received_)
             all_sensors_ready_ = true;
     }
@@ -327,6 +342,8 @@ private:
 
     bool imu_received_{false}, motor_feedback_received_{false};
     bool all_sensors_ready_{false};
+    std::optional<rclcpp::Time> last_imu_stamp_;
+    bool imu_stale_warned_{false};
 
     DriverMode driver_mode_{DriverMode::DISABLE};
     std::optional<rclcpp::Time> last_sensor_warn_;

@@ -7,6 +7,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <string>
 #include <linux/joystick.h>
@@ -81,8 +82,8 @@ public:
 
     void Update() override;
 
-    // Returns true if IMU serial port is open and receiving data
-    bool IsConnected() const { return fd >= 0; }
+    // Returns true if IMU serial port is open AND has received data within the last 2 seconds
+    bool IsConnected() const;
 
     // Raw sensor accessors (used by mpc_cpp)
     float const* get_quaternion() const { return quaternion; }  // [w,x,y,z]
@@ -95,6 +96,7 @@ private:
     
     std::thread update_thread_;
     std::atomic<bool> running_;
+    std::atomic<int64_t> last_data_ms_{0};
     mutable std::mutex data_mutex_;
     void UpdateLoop();
 

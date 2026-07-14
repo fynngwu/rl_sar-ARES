@@ -69,6 +69,13 @@ IMUComponent::~IMUComponent() {
     }
 }
 
+bool IMUComponent::IsConnected() const {
+    if (fd < 0) return false;
+    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    return (now - last_data_ms_.load()) < 2000;
+}
+
 void IMUComponent::UpdateLoop() {
     while (running_) {
         Update();
@@ -159,9 +166,13 @@ int IMUComponent::ConfigureSensorOutputs() {
 }
 
 void IMUComponent::SensorDataUpdata(uint32_t uiReg, uint32_t uiRegNum) {
-    s_cDataUpdate = 1; // 标记收到数据，用于 AutoScan
+    s_cDataUpdate = 1;
     
     if (!instance_) return;
+
+    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    instance_->last_data_ms_.store(now);
 
     std::lock_guard<std::mutex> lock(instance_->data_mutex_);
 

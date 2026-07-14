@@ -212,16 +212,6 @@ int DogDriver::GetLastSendError(int joint_idx) const {
     return motor_controller_->GetLastSendError(motor_indices_[joint_idx]);
 }
 
-bool DogDriver::IsHealthy() const {
-    if (!imu_connected_)
-        return false;
-    for (int i = 0; i < NUM_JOINTS; ++i) {
-        if (!motor_controller_->IsMotorOnline(motor_indices_[i]))
-            return false;
-    }
-    return true;
-}
-
 int DogDriver::OnlineMotorCount() const {
     int count = 0;
     for (int i = 0; i < NUM_JOINTS; ++i) {
