@@ -46,29 +46,121 @@ position_control:
     - [-0.8,        1.0217287]
 
   # Jump trajectory (RB+A from STAND)
+  #
+  # 前腿(front) = LF左前 + RF右前
+  # 后腿(rear)  = LH左后 + RH右后
+  #
+  # 两组各自独立的关键帧列表, 各自有独立的 duration
+  # 轨迹总时长 = 两组中较长的那个, 短的那组在末尾保持不动
+  #
+  # 参数说明:
+  #   theta: 角度 [度], 0=竖直向下, 正=腿向前, 负=腿向后
+  #   r: 足端到髋关节距离 [m], 越大=腿越伸展, 越小=腿越收缩
+  #   y: 侧向偏移 [m] (可选, 默认0), 左右对称张开: 左腿+y 右腿-y
+  #   duration: 该阶段持续时间 [s]
+  #   mode: smooth=从上一帧平滑过渡, step=瞬间跳到目标
   jump:
-    keyframes:
+    dt: 0.02
+    # ===== 前腿 (LF+RF) =====
+    front:
       - theta: -10
         r: 0.3
         duration: 0.1
         mode: smooth
-      # 蓄力: 腿向前收 
-      - theta: -30
+      # 蓄力: 前腿向前收
+      - theta: -0
+        r: 0.13
+        duration: 0.5
+        mode: smooth
+      # 前腿蹬地
+      - theta: -0
+        r: 0.4
+        duration: 0.3
+        mode: step
+      # 空中收腿搭在木板
+      - theta: 0
         r: 0.13
         duration: 0.3
         mode: smooth
-      # 蹬地: 腿向后下蹬出 
+      # 等待后腿收腿
+      - theta: 0
+        r: 0.15
+        duration: 0.3
+        mode: smooth
+      # 同时起跳
       - theta: -40
         r: 0.4
-        duration: 0.1
-        mode: step
-      # 空中收腿/落地: 前腿向前(+30), 后腿向后(-10)
-      - theta_front: 30
-        theta_rear: -10
-        r_front: 0.2
-        r_rear: 0.14
+        duration: 0.2
+        mode: smooth
+      # 前脚收腿
+      - theta: 40
+        r: 0.2
+        duration: 0.4
+        mode: smooth
+      # 后腿搭在木板上收腿
+      - theta: 40
+        r: 0.2
+        duration: 0.4
+        mode: smooth
+      # 后腿蹬腿，前腿站立
+      - theta: -10
+        r: 0.3
+        duration: 0.5
+        mode: smooth
+       
+
+
+    # ===== 后腿 (LH+RH) =====
+    rear:
+      - theta: -10
+        r: 0.3
         duration: 0.1
         mode: smooth
+      # 蓄力: 后腿向前收
+      - theta: 40
+        r: 0.13
+        duration: 0.5
+        mode: smooth
+      # 蹬地: 后腿慢慢后移
+      - theta: -30
+        r: 0.38
+        duration: 0.6
+        mode: smooth
+      # 搭在木板后收腿
+      - theta: 0
+        r: 0.14
+        duration: 0.3
+        mode: smooth
+      # 同时起跳
+      - theta: -40
+        r: 0.4
+        duration: 0.2
+        mode: smooth
+      # 前脚收腿，后腿等待
+      - theta: -40
+        r: 0.4
+        duration: 0.4
+        mode: smooth
+      # 后腿搭在木板上收腿
+      - theta: 20
+        r: 0.0
+        y: 0.2
+        duration: 0.4
+        mode: smooth
+      # 后腿蹬腿
+      - theta: -40
+        r: 0.1
+        y: 0.2
+        duration: 0.4
+        mode: smooth
+      # 恢复站立
+      - theta: -10
+        r: 0.3
+        duration: 0.1
+        mode: smooth
+
+      
+
 
   # Climb-over-wall sequence (RB+Y from STAND).
   # Feet are in each hip frame [m]. Current IK clamps x/z to the controller workspace,
