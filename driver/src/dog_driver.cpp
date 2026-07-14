@@ -204,7 +204,7 @@ bool DogDriver::IsJointInitialized(int joint_idx) const {
 }
 
 bool DogDriver::IsIMUConnected() const {
-    return imu_connected_;
+    return imu_ && imu_->IsConnected();
 }
 
 int DogDriver::GetLastSendError(int joint_idx) const {
