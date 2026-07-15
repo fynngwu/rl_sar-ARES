@@ -137,7 +137,6 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
         for (size_t i = 0; i < motor_data.size(); ++i) {
             auto& motor = motor_data[i];
             if (motor.motor_id == motor_id) {
-                motor.missed_times = 0;
                 motor.error_code = reserved & 0x3F;
                 motor.pattern = (reserved >> 6) & 0x03;
                 bool phase_current_fault = HandleFault(motor.motor_id, motor.error_code);
@@ -150,6 +149,7 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
                 
                 // Parse Data
                 if (frame->len >= 8) {
+                    motor.missed_times = 0;
                     uint16_t raw_pos = (frame->data[0] << 8) | frame->data[1];
                     uint16_t raw_vel = (frame->data[2] << 8) | frame->data[3];
                     uint16_t raw_tor = (frame->data[4] << 8) | frame->data[5];
@@ -177,7 +177,7 @@ void RobstrideController::HandleCANMessage(const struct device *dev, struct can_
         std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
         for (size_t i = 0; i < motor_data.size(); ++i) {
             auto& motor = motor_data[i];
-            if (motor.motor_id == motor_id) {
+            if (motor.motor_id == motor_id && frame->len >= 8) {
                 motor.missed_times = 0;
                 bool phase_current_fault = HandleErrorFeedback(motor.motor_id, frame);
                 if (phase_current_fault) {
@@ -204,12 +204,13 @@ RobstrideController::RobstrideController() : running(false) {
                     if (!motor.enabled) continue;
 
                     if (motor.missed_times > 100) {
-                        motor.missed_times = 0;
                         if (motor.online) {
                             motor.online = false;
                             std::cout << "[Robstride] Motor " << motor.motor_id << " offline" << std::endl;
                         }
                     }
+
+                    if (!motor.online) continue;
 
                     struct can_frame frame;
                     std::memset(&frame, 0, sizeof(frame));
