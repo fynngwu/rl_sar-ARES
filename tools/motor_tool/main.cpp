@@ -45,7 +45,7 @@ static const char* kJointNames[NUM_JOINTS] = {
     "LF_Knee", "LR_Knee", "RF_Knee", "RR_Knee"
 };
 
-static const char* kCanNames[NUM_LEGS] = {"can0", "can1", "can2", "can3"};
+static const char* kCanNames[NUM_LEGS] = {"can0", "can1", "can2", "can4"};
 
 static int can_index(int joint) { return joint % NUM_LEGS; }
 

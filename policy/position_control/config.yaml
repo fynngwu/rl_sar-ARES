@@ -35,10 +35,10 @@ position_control:
     - [-1.0,  1.0]
     - [-1.0,  1.0]
     # HipF
-    - [-1.2217658,  0.8726683]
-    - [-1.2217305,  0.8726683]
-    - [-0.8726999,  1.2217342]
-    - [-0.8726999,  1.2217305]
+    - [-1.2217658,  1.2726683]
+    - [-1.2217305,  1.2726683]
+    - [-1.2726999,  1.2217342]
+    - [-1.2726999,  1.2217305]
     # Knee
     - [-1.0217299,  0.8]
     - [-1.0217299,  0.8]
@@ -63,101 +63,125 @@ position_control:
     dt: 0.02
     # ===== 前腿 (LF+RF) =====
     front:
+     ##########第一阶段将腿放上去 2s #########
       - theta: -10
         r: 0.3
         duration: 0.1
         mode: smooth
       # 蓄力: 前腿向前收
-      - theta: -0
+      - theta: -30
         r: 0.13
         duration: 0.5
         mode: smooth
       # 前腿蹬地
-      - theta: -0
-        r: 0.4
-        duration: 0.3
-        mode: step
-      # 空中收腿搭在木板
-      - theta: 0
-        r: 0.13
-        duration: 0.3
-        mode: smooth
-      # 等待后腿收腿
-      - theta: 0
-        r: 0.15
-        duration: 0.3
-        mode: smooth
-      # 同时起跳
       - theta: -40
         r: 0.4
+        duration: 0.13
+        mode: smooth
+      # 空中收腿搭在木板
+      - theta: 10
+        r: 0.13
         duration: 0.2
         mode: smooth
-      # 前脚收腿
-      - theta: 40
-        r: 0.2
-        duration: 0.4
+      # 等待后腿转完
+      - theta: 30
+        r: 0.13
+        duration: 0.07
         mode: smooth
+      # 等待后腿收腿
+      - theta: 30
+        r: 0.15
+        duration: 1.0
+        mode: smooth
+      ########第二阶段两腿同时跳出
+      # # 同时起跳
+      # - theta: -40
+      #   r: 0.4
+      #   duration: 0.2
+      #   mode: smooth
+      # # 前脚收腿
+      # - theta: 40
+      #   r: 0.2
+      #   duration: 0.4
+      #   mode: smooth
       # 后腿搭在木板上收腿
-      - theta: 40
-        r: 0.2
-        duration: 0.4
-        mode: smooth
-      # 后腿蹬腿，前腿站立
-      - theta: -10
-        r: 0.3
-        duration: 0.5
-        mode: smooth
+      # - theta: 40
+      #   r: 0.2
+      #   duration: 0.4
+      #   mode: smooth
+      # # 后腿蹬腿，前腿站立
+      # - theta: -10
+      #   r: 0.3
+      #   duration: 0.5
+      #   mode: smooth
        
 
 
     # ===== 后腿 (LH+RH) =====
     rear:
+    #################第一阶段将腿放上去 2s #########
       - theta: -10
         r: 0.3
         duration: 0.1
         mode: smooth
       # 蓄力: 后腿向前收
-      - theta: 40
-        r: 0.13
+      - theta: 20
+        r: 0.22
         duration: 0.5
+        mode: smooth
+      # 等他弹跳
+      - theta: 0
+        r: 0.25
+        duration: 0.15
         mode: smooth
       # 蹬地: 后腿慢慢后移
       - theta: -30
-        r: 0.38
-        duration: 0.6
+        r: 0.34
+        duration: 0.25
         mode: smooth
+      # 给第一阶段结束给出缓冲
+      - theta: -30
+        r: 0.34
+        duration: 1.0
+        mode: smooth
+      ## 第二阶段两腿同时跳出
+      # 保持后腿
+      # - theta: -50
+      #   r: 0.35
+      #   duration: 0.0
+      #   mode: smooth
       # 搭在木板后收腿
-      - theta: 0
-        r: 0.14
-        duration: 0.3
-        mode: smooth
-      # 同时起跳
-      - theta: -40
-        r: 0.4
-        duration: 0.2
-        mode: smooth
-      # 前脚收腿，后腿等待
-      - theta: -40
-        r: 0.4
-        duration: 0.4
-        mode: smooth
+      # - theta: 0
+      #   r: 0.14
+      #   duration: 0.3
+      #   mode: smooth
+      # # 同时起跳
+      # - theta: -40
+      #   r: 0.4
+      #   duration: 0.2
+      #   mode: smooth
+      # # 前脚收腿，后腿等待
+      # - theta: -40
+      #   r: 0.4
+      #   duration: 0.4
+      #   mode: smooth
       # 后腿搭在木板上收腿
-      - theta: 20
-        r: 0.0
-        y: 0.2
-        duration: 0.4
-        mode: smooth
-      # 后腿蹬腿
-      - theta: -40
-        r: 0.1
-        y: 0.2
-        duration: 0.4
-        mode: smooth
-      # 恢复站立
-      - theta: -10
-        r: 0.3
-        duration: 0.1
-        mode: smooth
+      # - theta: 20
+      #   r: 0.15
+      #   y: 0.15
+      #   duration: 0.4
+      #   mode: smooth
+      # # 后腿蹬腿
+      # - theta: -40
+      #   r: 0.35
+      #   y: 0.
+      #   duration: 0.4
+      #   mode: smooth
+      # # 恢复站立
+      # - theta: -10
+      #   r: 0.3
+      #   duration: 0.3
+      #   mode: smooth
 
       
 
@@ -189,17 +213,17 @@ position_control:
         feet:
           LF: {x: -0.25, y: 0.0, z: -0.3}
           RF: {x: -0.25, y: 0.0, z: -0.3}
-          LH: {x: -0.15, y: 0.0, z: -0.1}
-          RH: {x: -0.15, y: 0.0, z: -0.1}
+          LH: {x: -0.1, y: 0.0, z: -0.1}
+          RH: {x: -0.1, y: 0.0, z: -0.1}
       # 2) Air tuck: quickly retract front legs while the body is moving forward.
       - name: air_front_tuck
         duration: 0.1
         mode: step
         feet:
-          LF: {x: 0.10, y: 0.0, z: -0.15}
-          RF: {x: 0.10, y: 0.0, z: -0.15}
-          LH: {x: -0.35, y: 0.0, z: -0.10}
-          RH: {x: -0.35, y: 0.0, z: -0.10}
+          LF: {x: 0.15, y: 0.0, z: -0.10}
+          RF: {x: 0.15, y: 0.0, z: -0.10}
+          LH: {x: -0.3, y: 0.0, z: -0.0}
+          RH: {x: -0.3, y: 0.0, z: -0.0}
   # climb:
   #   dt: 0.02
   #   start_feet:

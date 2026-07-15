@@ -25,7 +25,7 @@ dogv2_cts/cts:
   gravity_vec_scale: 1.0
 
   # PD gains (driver reads these at init)
-  fixed_kp: 20
+  fixed_kp: 15
   fixed_kd: 0.5
   torque_limits: 17
 

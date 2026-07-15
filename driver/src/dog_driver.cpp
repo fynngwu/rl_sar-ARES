@@ -6,7 +6,7 @@
 #include <thread>
 #include <chrono>
 
-static constexpr const char* kCanNames[4] = {"can0", "can1", "can2", "can3"};
+static constexpr const char* kCanNames[4] = {"can0", "can1", "can2", "can4"};
 static constexpr const char* kIMUDev = "/dev/ttyCH341USB0";
 
 DogDriver::DogDriver() {
