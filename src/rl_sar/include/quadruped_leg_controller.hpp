@@ -50,11 +50,8 @@ public:
 
         stand_height_ = 0.21;
 
-        // Workspace limits (hip frame)
-        x_min_ = -0.25;  x_max_ = 0.15;
-        y_min_ = -0.1;   y_max_ = 0.1;
-        r_min_ = 0.15;   r_max_ = 0.4;
-        z_min_ = -0.38;   z_max_ = -0.1;
+        // Workspace limits: radial distance from hip joint
+        r_min_ = 0.1;    r_max_ = 0.42;
 
         // Joint offsets: left legs and right legs have opposite signs
         joint_offsets_ <<  0.0,   0.0,   0.0,   0.0,    // abad:  LF, RF, LH, RH
@@ -175,16 +172,32 @@ public:
     }
 
     // 3-DOF IK: foot_hip -> [q_abad, q_hip, q_knee]
-    // x-z plane only, q_abad = 0 (no lateral motion)
+    // Abduction (y) + x-z plane IK in the leg plane
     Eigen::Vector3d solve_ik(const Vec3& p_hip) const {
-        double x = clamp(p_hip.x, x_min_, x_max_);
-        double z = clamp(p_hip.z, z_min_, z_max_);
+        double x = p_hip.x;
+        double y = p_hip.y;
+        double z = p_hip.z;
 
-        // q1: abduction = 0
-        double q1 = 0.0;
+        // Radial clamp: r = sqrt(x²+y²+z²), scale uniformly if out of range
+        double r = std::sqrt(x * x + y * y + z * z);
+        if (r < r_min_ || r > r_max_) {
+            double target = (r < r_min_) ? r_min_ : r_max_;
+            double scale = (r > 1e-9) ? target / r : 0.0;
+            double nx = x * scale, ny = y * scale, nz = z * scale;
+            printf("[IK] Warning: foot (%.3f, %.3f, %.3f) r=%.3f out of range [%.2f, %.2f], "
+                   "clamped to (%.3f, %.3f, %.3f)\n",
+                   x, y, z, r, r_min_, r_max_, nx, ny, nz);
+            x = nx; y = ny; z = nz;
+        }
 
-        // x-z 平面 IK
-        double r2 = x * x + z * z;
+        // q1: abduction angle from y and z
+        double q1 = std::atan2(y, -z);
+
+        // Effective distance in leg plane (perpendicular to x-axis)
+        double d = std::sqrt(y * y + z * z);
+
+        // x-z plane IK in the leg plane
+        double r2 = x * x + d * d;
 
         // Knee angle
         double cos_q3 = clamp((r2 - L2_ * L2_ - L3_ * L3_) / (2.0 * L2_ * L3_),
@@ -192,7 +205,7 @@ public:
         double q3 = std::acos(cos_q3);
 
         // Hip pitch angle
-        double alpha = std::atan2(x, -z);
+        double alpha = std::atan2(x, d);
         double beta  = std::atan2(L3_ * std::sin(q3),
                                   L2_ + L3_ * std::cos(q3));
         double q2 = alpha - beta;
@@ -220,8 +233,7 @@ private:
     double L2_, L3_;
     double stand_height_;
     double yaw_vx_gain_;
-    double x_min_, x_max_, y_min_, y_max_;
-    double r_min_, r_max_, z_min_, z_max_;
+    double r_min_, r_max_;
     Eigen::Matrix<double, 3, 4> joint_offsets_;  // [abad,hip,knee] x [LF,RF,LH,RH]
     Eigen::Matrix<double, 3, 4> joint_signs_;    // +1 normal, -1 reversed per joint per leg
     std::array<LegConfig, 4> legs_;

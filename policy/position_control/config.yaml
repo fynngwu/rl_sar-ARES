@@ -30,10 +30,10 @@ position_control:
   # Position limits (same as CTS policy, driver order: HipA LF/LR/RF/RR, HipF LF/LR/RF/RR, Knee LF/LR/RF/RR)
   position_limits:
     # HipA
-    - [-0.7853982,  0.7853982]
-    - [-0.7853982,  0.7853982]
-    - [-0.7853982,  0.7853982]
-    - [-0.7853982,  0.7853982]
+    - [-1.0,  1.0]
+    - [-1.0,  1.0]
+    - [-1.0,  1.0]
+    - [-1.0,  1.0]
     # HipF
     - [-1.2217658,  0.8726683]
     - [-1.2217305,  0.8726683]
