@@ -66,6 +66,10 @@ public:
             "/motor_param_update", motor_param_qos,
             std::bind(&AresDriverNode::MotorParamCallback, this, std::placeholders::_1));
 
+        auto_cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+            "/auto_cmd", 10,
+            std::bind(&AresDriverNode::AutoCmdCallback, this, std::placeholders::_1));
+
         feedback_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(10),
             std::bind(&AresDriverNode::FeedbackTimerCallback, this));
@@ -110,6 +114,15 @@ private:
             torque.assign(msg->effort.begin(), msg->effort.begin() + AresDriverCore::NUM_JOINTS);
         core_->SetMotorParams(kp, kd, torque);
         RCLCPP_INFO(this->get_logger(), "Motor params updated from /motor_param_update");
+    }
+
+    void AutoCmdCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+    {
+        core_->SetAutoCommand(
+            static_cast<float>(msg->linear.x),
+            static_cast<float>(msg->linear.y),
+            static_cast<float>(msg->linear.z),
+            static_cast<float>(msg->angular.z));
     }
 
     void FeedbackTimerCallback()
@@ -159,8 +172,9 @@ private:
             auto now = std::chrono::steady_clock::now();
             if (!last_cmd_print_ || std::chrono::duration<float>(now - *last_cmd_print_).count() >= 1.0f) {
                 last_cmd_print_ = now;
-                printf("[CMD] vx=%.3f vy=%.3f wz=%.3f h=%.3f\n",
-                       gamepad.linear_x, gamepad.linear_y, gamepad.angular_z, gamepad.linear_z);
+                printf("[CMD] vx=%.3f vy=%.3f wz=%.3f h=%.3f%s\n",
+                       gamepad.linear_x, gamepad.linear_y, gamepad.angular_z, gamepad.linear_z,
+                       core_->IsAutoMode() ? " [AUTO]" : "");
             }
         }
 
@@ -208,6 +222,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr policy_cycle_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_command_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr motor_param_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr auto_cmd_sub_;
     rclcpp::TimerBase::SharedPtr feedback_timer_;
 };
 

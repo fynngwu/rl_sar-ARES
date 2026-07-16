@@ -5,3 +5,5 @@ logs/
 *.so
 *.a
 .deps
+.venv
+__pycache__/

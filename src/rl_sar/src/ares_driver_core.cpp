@@ -161,7 +161,25 @@ public:
     GamepadCommand PollGamepad() const
     {
         std::lock_guard<std::mutex> lock(gamepad_mutex_);
+        if (auto_mode_.load()) {
+            return cached_auto_cmd_;
+        }
         return cached_gamepad_;
+    }
+
+    bool IsAutoMode() const
+    {
+        return auto_mode_.load();
+    }
+
+    void SetAutoCommand(float linear_x, float linear_y, float linear_z, float angular_z)
+    {
+        std::lock_guard<std::mutex> lock(gamepad_mutex_);
+        cached_auto_cmd_.connected = true;
+        cached_auto_cmd_.linear_x = linear_x;
+        cached_auto_cmd_.linear_y = linear_y;
+        cached_auto_cmd_.linear_z = linear_z;
+        cached_auto_cmd_.angular_z = angular_z;
     }
 
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
@@ -190,6 +208,18 @@ public:
     {
         printf("\n=== ARES Driver Mode Help ===\n");
         printf("Current mode: %s\n", mode_name(mode_.load()));
+        printf("Auto mode: %s\n", auto_mode_.load() ? "ON" : "OFF");
+        printf("Gamepad combos:\n");
+        printf("  LB+A      → STAND\n");
+        printf("  LB+Y      → RL\n");
+        printf("  LB+B      → GAIT\n");
+        printf("  RB+X      → DISABLE\n");
+        printf("  LB+RB     → DAMPING\n");
+        printf("  RB+A      → JUMP (from STAND)\n");
+        printf("  RB+Y      → CLIMB (from STAND)\n");
+        printf("  RB+B      → Cycle policy\n");
+        printf("  LB+Start  → Toggle AUTO mode\n");
+        printf("  Start     → Reconnect CAN\n");
         printf("=============================\n\n");
     }
 
@@ -745,6 +775,7 @@ private:
         bool lb_b     = lb && b;
         bool lb_y     = lb && y;
         bool lb_x     = lb && x;
+        bool lb_start = lb && start;
         bool rb_a     = rb && a;
         bool rb_b     = rb && b;
         bool rb_y     = rb && y;
@@ -755,6 +786,7 @@ private:
         bool lb_b_edge     = lb_b     && !prev_lb_b_;
         bool lb_y_edge     = lb_y     && !prev_lb_y_;
         bool lb_x_edge     = lb_x     && !prev_lb_x_;
+        bool lb_start_edge = lb_start && !prev_lb_start_;
         bool rb_a_edge     = rb_a     && !prev_rb_a_;
         bool rb_b_edge     = rb_b     && !prev_rb_b_;
         bool rb_y_edge     = rb_y     && !prev_rb_y_;
@@ -766,6 +798,7 @@ private:
         prev_lb_b_     = lb_b;
         prev_lb_y_     = lb_y;
         prev_lb_x_     = lb_x;
+        prev_lb_start_ = lb_start;
         prev_rb_a_     = rb_a;
         prev_rb_b_     = rb_b;
         prev_rb_y_     = rb_y;
@@ -786,6 +819,17 @@ private:
         } else if (lb_b_edge) {
             printf("[GAMEPAD] LB+B → GAIT\n");
             mode_ = DriverMode::GAIT;
+        } else if (lb_start_edge) {
+            bool was_auto = auto_mode_.load();
+            auto_mode_.store(!was_auto);
+            if (!was_auto) {
+                printf("[GAMEPAD] LB+Start → AUTO MODE ON\n");
+                printf("  Velocity source: /auto_cmd topic (gamepad摇杆/方向键被忽略)\n");
+                printf("  手柄组合键仍然有效 (LB+RB→DAMPING 紧急停止等)\n");
+            } else {
+                printf("[GAMEPAD] LB+Start → AUTO MODE OFF\n");
+                printf("  Velocity source: gamepad\n");
+            }
         } else if (rb_a_edge) {
             if (mode_.load() == DriverMode::STAND) {
                 printf("[GAMEPAD] RB+A → JUMP\n");
@@ -890,6 +934,7 @@ private:
     std::chrono::steady_clock::time_point last_reconnect_{};
     bool prev_rb_x_ = false, prev_lb_rb_ = false;
     bool prev_lb_a_ = false, prev_lb_b_ = false, prev_lb_y_ = false, prev_lb_x_ = false;
+    bool prev_lb_start_ = false;
     bool prev_rb_a_ = false;
     bool prev_rb_b_ = false, prev_rb_y_ = false;
     bool prev_start_ = false;
@@ -897,6 +942,9 @@ private:
     mutable std::mutex driver_mutex_;
     std::atomic<bool> reconnect_pending_{false};
     GamepadCommand cached_gamepad_{};
+
+    std::atomic<bool> auto_mode_{false};
+    GamepadCommand cached_auto_cmd_{};
 
     std::atomic<int> policy_cycle_pending_{0};
 
@@ -932,6 +980,16 @@ AresDriverCore::ImuData AresDriverCore::GetImuData() const
 AresDriverCore::GamepadCommand AresDriverCore::PollGamepad() const
 {
     return impl_->PollGamepad();
+}
+
+void AresDriverCore::SetAutoCommand(float linear_x, float linear_y, float linear_z, float angular_z)
+{
+    impl_->SetAutoCommand(linear_x, linear_y, linear_z, angular_z);
+}
+
+bool AresDriverCore::IsAutoMode() const
+{
+    return impl_->IsAutoMode();
 }
 
 void AresDriverCore::SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,

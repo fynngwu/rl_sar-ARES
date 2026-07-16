@@ -1,0 +1,39 @@
+# Auto Pilot — velocity command sequence
+#
+# 使用方法:
+#   1. 手柄 LB+Start → 进入 AUTO MODE
+#   2. 手柄 LB+A → STAND, 然后 LB+Y → RL (或 LB+B → GAIT)
+#   3. 运行: python3 tools/auto_pilot.py -c tools/auto_pilot_config.yaml
+#
+# Fields:
+#   vx:       forward velocity (m/s), default 0.0
+#   vy:       lateral velocity (m/s), default 0.0
+#   wz:       yaw rate (rad/s), default 0.0
+#   height:   body height offset (m), default 0.0
+#   duration: step duration (seconds), required
+#   smooth:   linear interpolation from previous step, default true
+
+steps:
+  - vx: 0.0
+    vy: 0.0
+    wz: 0.0
+    duration: 2.0
+    smooth: false
+
+  - vx: 0.5
+    vy: 0.0
+    wz: 0.0
+    duration: 3.0
+    smooth: true
+
+  - vx: 0.5
+    vy: 0.0
+    wz: 0.5
+    duration: 2.0
+    smooth: true
+
+  - vx: 0.0
+    vy: 0.0
+    wz: 0.0
+    duration: 2.0
+    smooth: true

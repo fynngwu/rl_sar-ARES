@@ -45,10 +45,13 @@ public:
     ImuData GetImuData() const;
     GamepadCommand PollGamepad() const;
 
+    void SetAutoCommand(float linear_x, float linear_y, float linear_z, float angular_z);
+
     void SetMotorParams(const std::vector<float>& kp, const std::vector<float>& kd,
                         const std::vector<float>& torque);
 
     DriverMode GetMode() const;
+    bool IsAutoMode() const;
     void PrintModeHelp() const;
 
     const std::vector<float>& config_kp() const;
