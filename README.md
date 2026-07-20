@@ -1,6 +1,8 @@
 # rl_sar-ARES
 
-ARES 四足机器人 RL 策略推理。基于 [rl_sar](https://github.com/fan-ziqi/rl_sar) 框架，适配 ARES 硬件（Robstride 电机通过 CAN，WIT IMU 通过串口）。
+> 本项目基于华东理工大学开源框架 [UIKA_HIMloco](https://github.com/SAIKi0125/UIKA_HIMloco) 编写，特别感谢他们的帮助，提供了宝贵的思路和参考。
+
+ARES 四足机器人 RL 策略推理，适配 ARES 硬件（Robstride 电机通过 CAN，WIT IMU 通过串口）。
 
 ## 快速开始
 
